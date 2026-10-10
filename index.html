@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!--
+    Content-Security-Policy – verified to work over http(s) AND file:// (Chromium; fonts, JPEG/PNG
+    images, real worker over http, main-thread fallback on file://), no violations reported.
+    - Only local scripts/styles: no inline code, no eval (pdf.js runs with isEvalSupported: false).
+    - connect-src 'none': the page cannot send data anywhere – PDFs never leave the device.
+    - "file:" is listed next to 'self' because file:// pages have an opaque origin and not every
+      browser matches 'self' against local files.
+    - worker-src: pdf.js starts vendor/pdf.worker.min.js as a Web Worker over http(s)
+      (blob: covers pdf.js' own fallback wrapper).
+    - img-src data: is needed for the inline favicon.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' file:; style-src 'self' file:; img-src 'self' file: data: blob:; font-src 'self' file: data:; worker-src 'self' file: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f5f6fa" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0e1117" media="(prefers-color-scheme: dark)">
+  <meta name="description" content="PDFs zusammenführen und teilen – direkt im Browser, ohne Upload. Deine Dateien verlassen nie deinen Rechner.">
+  <title>PDF-Tool – PDFs zusammenführen und teilen</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%234c6ef5'/%3E%3Cstop offset='1' stop-color='%237048e8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cpath d='M11 7h7l5 5v12a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 10 24V8.5A1.5 1.5 0 0 1 11.5 7z' fill='%23fff'/%3E%3Cpath d='M18 7v5h5' fill='%23c5cdfb'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/styles.css">
+  <script defer src="vendor/pdf-lib.min.js"></script>
+  <script defer src="vendor/jszip.min.js"></script>
+  <script defer src="vendor/pdf.min.js"></script>
+  <script defer src="js/pdf-core.js"></script>
+  <script defer src="js/preview.js"></script>
+  <script defer src="js/app.js"></script>
+</head>
+<body>
+  <!-- Icon sprite, referenced via <use href="#i-…">. -->
+  <svg class="icon-sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-merge" viewBox="0 0 24 24"><path d="M6 3v3a6 6 0 0 0 6 6 6 6 0 0 0 6-6V3"/><path d="M12 12v9"/><path d="m8.5 17.5 3.5 3.5 3.5-3.5"/></symbol>
+    <symbol id="i-split" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.12 15.88"/><path d="M14.47 14.48 20 20"/><path d="M8.12 8.12 12 12"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V4"/><path d="m7 9 5-5 5 5"/><path d="M4 15v3a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-3"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h4"/></symbol>
+    <symbol id="i-grip" viewBox="0 0 24 24"><g fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></g></symbol>
+    <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5"/><path d="m6 11 6-6 6 6"/></symbol>
+    <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="m6 13 6 6 6-6"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4.5A1.5 1.5 0 0 1 9.5 3h5A1.5 1.5 0 0 1 16 4.5V6"/><path d="m19 6-.9 13.1A2 2 0 0 1 16.1 21H7.9a2 2 0 0 1-2-1.9L5 6"/></symbol>
+    <symbol id="i-sort" viewBox="0 0 24 24"><path d="M4 6h9"/><path d="M4 12h6"/><path d="M4 18h3"/><path d="M17 5v14"/><path d="m14 16 3 3 3-3"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.8 2.8L16.5 9.5"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15.4-6.4L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.4 6.4L3 16"/><path d="M3 21v-5h5"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+    <symbol id="i-archive" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></symbol>
+  </svg>
+
+  <a class="skip-link" href="#main">Zum Inhalt springen</a>
+
+  <header class="site-header">
+    <div class="container header-inner">
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+        <defs>
+          <linearGradient id="logo-gradient" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#4c6ef5"/>
+            <stop offset="1" stop-color="#7048e8"/>
+          </linearGradient>
+        </defs>
+        <rect width="32" height="32" rx="8" fill="url(#logo-gradient)"/>
+        <path d="M11 7h7l5 5v12a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 10 24V8.5A1.5 1.5 0 0 1 11.5 7z" fill="#fff"/>
+        <path d="M18 7v5h5" fill="#c5cdfb"/>
+        <path d="M13 16.5h7M13 19.5h5" stroke="#7048e8" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      <div class="header-text">
+        <h1>PDF-Tool</h1>
+        <p class="subtitle">PDFs zusammenführen und teilen – direkt im Browser. Deine Dateien verlassen nie deinen Rechner.</p>
+      </div>
+      <p class="privacy-pill"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-lock"/></svg>Kein Upload · funktioniert offline</p>
+    </div>
+  </header>
+
+  <main id="main" class="container" tabindex="-1">
+    <noscript>
+      <p class="noscript">Bitte aktiviere JavaScript. Das PDF-Tool arbeitet vollständig in deinem Browser und braucht JavaScript, um deine PDFs zu verarbeiten – hochgeladen wird dabei nichts.</p>
+    </noscript>
+
+    <div class="tablist" role="tablist" aria-label="Funktion wählen">
+      <button type="button" id="tab-merge" class="tab" role="tab" aria-selected="true" aria-controls="panel-merge">
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-merge"/></svg>
+        <span>Zusammenführen</span>
+      </button>
+      <button type="button" id="tab-split" class="tab" role="tab" aria-selected="false" aria-controls="panel-split" tabindex="-1">
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-split"/></svg>
+        <span>Teilen</span>
+      </button>
+    </div>
+
+    <div id="status" class="status" role="status" aria-live="polite" aria-atomic="true"></div>
+
+    <!-- ===================== Zusammenführen ===================== -->
+    <section id="panel-merge" class="panel" role="tabpanel" aria-labelledby="tab-merge" tabindex="0">
+      <label id="merge-dropzone" class="dropzone" for="merge-input" data-dropzone>
+        <input id="merge-input" class="visually-hidden" type="file" multiple accept="application/pdf,.pdf">
+        <span class="dropzone-icon"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-upload"/></svg></span>
+        <span class="dropzone-title">PDF-Dateien hierher ziehen</span>
+        <span class="dropzone-text">oder <span class="dropzone-link">Dateien auswählen</span></span>
+        <span class="dropzone-hint">Mehrere Dateien möglich – die Reihenfolge kannst du danach ändern.</span>
+      </label>
+
+      <div class="card merge-files" id="merge-files">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Dateien</h2>
+            <p id="merge-summary" class="summary">Noch keine Dateien ausgewählt</p>
+          </div>
+          <div class="toolbar">
+            <button type="button" id="merge-sort" class="button button-ghost button-small">
+              <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-sort"/></svg>
+              <span class="label-long">Nach Dateiname sortieren</span><span class="label-short" aria-hidden="true">Sortieren</span>
+            </button>
+            <button type="button" id="merge-clear" class="button button-ghost button-small">
+              <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-trash"/></svg>
+              <span>Alle entfernen</span>
+            </button>
+          </div>
+        </div>
+        <p id="merge-empty" class="empty-state">Noch leer – füge oben die PDFs hinzu, die du zu einer Datei zusammenfassen möchtest.</p>
+        <ul id="merge-list" class="merge-list" aria-label="Ausgewählte Dateien in Reihenfolge"></ul>
+        <p id="merge-help" class="help-text">
+          Ändere die Reihenfolge per Ziehen oder mit den Pfeilen. Im Feld „Seiten“ wählst du bei Bedarf einzelne Seiten aus, z. B. <kbd>1-3, 7</kbd> – leer bedeutet alle Seiten.
+        </p>
+      </div>
+
+      <div class="card action-card">
+        <div class="field action-field">
+          <label for="merge-filename" class="label">Dateiname</label>
+          <input id="merge-filename" class="input" type="text" value="zusammengefuehrt.pdf" autocomplete="off" spellcheck="false">
+        </div>
+        <button type="button" id="merge-run" class="button button-primary button-large" disabled>
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-merge"/></svg>
+          <span>PDFs zusammenführen</span>
+        </button>
+      </div>
+
+      <div id="merge-result" class="result" hidden></div>
+    </section>
+
+    <!-- ===================== Teilen ===================== -->
+    <section id="panel-split" class="panel" role="tabpanel" aria-labelledby="tab-split" tabindex="0" hidden>
+      <label id="split-dropzone" class="dropzone" for="split-input" data-dropzone>
+        <input id="split-input" class="visually-hidden" type="file" accept="application/pdf,.pdf">
+        <span class="dropzone-icon"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-upload"/></svg></span>
+        <span class="dropzone-title">PDF-Datei hierher ziehen</span>
+        <span class="dropzone-text">oder <span class="dropzone-link">Datei auswählen</span></span>
+        <span class="dropzone-hint">Eine Datei, die du in mehrere Teile zerlegen oder aus der du Seiten herausziehen möchtest.</span>
+      </label>
+
+      <div id="split-file-info" class="card file-info" hidden>
+        <span class="file-info-icon"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-file"/></svg></span>
+        <div class="file-info-text">
+          <p id="split-file-name" class="file-info-name"></p>
+          <p id="split-file-meta" class="file-info-meta"></p>
+        </div>
+        <button type="button" id="split-reset" class="button button-secondary">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-refresh"/></svg>
+          <span>Andere Datei wählen</span>
+        </button>
+      </div>
+
+      <div class="split-layout">
+        <div class="card split-options">
+          <fieldset class="modes">
+            <legend class="card-title">Wie soll geteilt werden?</legend>
+            <div class="mode-grid">
+              <label class="mode-option">
+                <input type="radio" name="split-mode" value="single">
+                <span class="mode-text">
+                  <span class="mode-title">Jede Seite einzeln</span>
+                  <span class="mode-desc">Eine Datei pro Seite</span>
+                </span>
+              </label>
+              <label class="mode-option">
+                <input type="radio" name="split-mode" value="chunk">
+                <span class="mode-text">
+                  <span class="mode-title">Alle N Seiten</span>
+                  <span class="mode-desc">Gleich große Teile</span>
+                </span>
+              </label>
+              <label class="mode-option">
+                <input type="radio" name="split-mode" value="ranges" checked>
+                <span class="mode-text">
+                  <span class="mode-title">Nach Seitenbereichen</span>
+                  <span class="mode-desc">Ein Bereich = eine Datei</span>
+                </span>
+              </label>
+              <label class="mode-option">
+                <input type="radio" name="split-mode" value="extract">
+                <span class="mode-text">
+                  <span class="mode-title">Seiten auswählen</span>
+                  <span class="mode-desc">Auswahl als eine PDF</span>
+                </span>
+              </label>
+            </div>
+          </fieldset>
+
+          <div class="mode-settings">
+            <p class="field-hint" data-mode-panel="single" hidden>Jede Seite wird zu einer eigenen PDF-Datei.</p>
+            <div class="field" data-mode-panel="chunk" hidden>
+              <label for="split-chunk-size" class="label">Seiten pro Datei</label>
+              <input id="split-chunk-size" class="input input-number" type="number" min="1" step="1" value="2" inputmode="numeric" aria-describedby="split-preview">
+            </div>
+            <div class="field" data-mode-panel="ranges">
+              <label for="split-ranges" class="label">Seitenbereiche</label>
+              <input id="split-ranges" class="input" type="text" placeholder="z. B. 1-3, 4-6, 7-" autocomplete="off" spellcheck="false" aria-describedby="split-ranges-hint split-preview">
+              <p id="split-ranges-hint" class="field-hint">Jeder Bereich wird zu einer eigenen Datei. <kbd>7-</kbd> heißt „ab Seite 7 bis zum Ende“, <kbd>5-3</kbd> dreht die Reihenfolge um.</p>
+            </div>
+            <div class="field" data-mode-panel="extract" hidden>
+              <label for="split-extract" class="label">Ausgewählte Seiten</label>
+              <input id="split-extract" class="input" type="text" placeholder="z. B. 1, 3, 5-7" autocomplete="off" spellcheck="false" aria-describedby="split-extract-hint split-preview">
+              <p id="split-extract-hint" class="field-hint">Klicke auf die Seiten in der Vorschau oder tippe die Nummern ein. Alle gewählten Seiten landen in einer PDF.</p>
+            </div>
+          </div>
+
+          <p id="split-preview" class="split-preview" aria-live="polite"></p>
+
+          <label class="checkbox">
+            <input id="split-zip" type="checkbox" checked>
+            <span>Als ZIP-Archiv herunterladen</span>
+          </label>
+
+          <button type="button" id="split-run" class="button button-primary button-large button-block" disabled>
+            <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-split"/></svg>
+            <span>PDF teilen</span>
+          </button>
+
+          <div id="split-results" class="result" hidden></div>
+        </div>
+
+        <div class="card split-pages" id="split-pages">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Seiten</h2>
+              <p id="split-pages-hint" class="summary">Nach dem Laden siehst du hier alle Seiten.</p>
+            </div>
+            <div class="toolbar" id="split-select-tools" hidden>
+              <button type="button" id="split-select-all" class="button button-ghost button-small">Alle auswählen</button>
+              <button type="button" id="split-select-none" class="button button-ghost button-small">Auswahl aufheben</button>
+            </div>
+          </div>
+          <div id="split-thumbnails" class="page-grid" aria-label="Seitenvorschau"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="busy" class="busy" hidden>
+    <span class="spinner" aria-hidden="true"></span>
+    <span id="busy-text">Wird verarbeitet …</span>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>Verarbeitung lokal mit pdf-lib, pdf.js und JSZip.</p>
+      <p>
+        Lizenzen:
+        <a href="vendor/licenses/pdf-lib-LICENSE.md">pdf-lib</a> ·
+        <a href="vendor/licenses/pdfjs-LICENSE">pdf.js</a> ·
+        <a href="vendor/licenses/jszip-LICENSE.md">JSZip</a>
+      </p>
+    </div>
+  </footer>
+</body>
+</html>

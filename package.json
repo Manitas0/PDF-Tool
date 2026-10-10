@@ -5,7 +5,7 @@
   "description": "PDF zusammenführen und teilen – komplett lokal im Browser",
   "scripts": {
     "vendor": "node scripts/vendor.mjs",
-    "test": "node --test tests/unit/",
+    "test": "node --test \"tests/unit/*.test.mjs\"",
     "test:e2e": "playwright test",
     "serve": "node scripts/serve.mjs"
   },
