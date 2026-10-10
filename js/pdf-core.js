@@ -475,6 +475,47 @@
   }
 
   /**
+   * Checks the page tree and makes pdf-lib see the same pages as pdf.js, which renders the
+   * thumbnails:
+   *   - page dictionaries without /Type /Page (and tree nodes without /Type /Pages) get their
+   *     type; pdf-lib would silently skip them, while pdf.js, PDFium and poppler show them;
+   *   - an object that occurs twice in the tree (a cycle, or shared /Kids with which a few KB
+   *     declare millions of pages) is rejected, as pdf.js does.
+   * Throws a plain Error for a broken tree; loadPdf turns it into INVALID_PDF.
+   */
+  function normalizePageTree(lib, doc) {
+    const { PDFArray, PDFDict, PDFName, PDFPageLeaf, PDFPageTree, PDFRef } = lib;
+    const context = doc.context;
+    const kidsKey = PDFName.of('Kids');
+    const pagesKey = PDFName.of('Pages');
+    const seen = new Set();
+    const pending = [{ value: doc.catalog.get(pagesKey), isRoot: true, replace: (node) => doc.catalog.set(pagesKey, node) }];
+    while (pending.length > 0) {
+      const { value, isRoot, replace } = pending.pop();
+      if (seen.has(value)) throw new Error('Invalid page tree: an object occurs more than once.');
+      let node = value instanceof PDFRef ? context.lookup(value) : value;
+      if (!(node instanceof PDFDict)) continue;
+
+      if (Object.getPrototypeOf(node) === PDFDict.prototype) {
+        // Like pdf.js: a node without /Kids is a page.
+        const isTree = isRoot || node.has(kidsKey);
+        node = (isTree ? PDFPageTree : PDFPageLeaf).fromMapWithContext(new Map(node.entries()), context);
+        node.set(PDFName.of('Type'), PDFName.of(isTree ? 'Pages' : 'Page'));
+        if (value instanceof PDFRef) context.assign(value, node);
+        else replace(node);
+      }
+      seen.add(value);
+      seen.add(node);
+
+      const kids = node instanceof PDFPageTree ? node.lookup(kidsKey) : undefined;
+      if (!(kids instanceof PDFArray)) continue;
+      for (let i = kids.size() - 1; i >= 0; i--) {
+        pending.push({ value: kids.get(i), isRoot: false, replace: (kid) => kids.set(i, kid) });
+      }
+    }
+  }
+
+  /**
    * Loads a PDF with pdf-lib and converts all failures into PdfToolErrors.
    * @param {Uint8Array|ArrayBuffer} bytes
    * @param {{ fileName?: string }} [opts]
@@ -497,6 +538,7 @@
     let pageCount;
     try {
       doc = await lib.PDFDocument.load(data, { updateMetadata: false });
+      normalizePageTree(lib, doc);
       pageCount = doc.getPageCount(); // walks the page tree, so broken trees fail here
     } catch (err) {
       if (isEncryptedPdfError(err, lib) || containsEncryptKey(data)) {
@@ -565,9 +607,325 @@
     return doc;
   }
 
-  async function appendPages(target, source, indices) {
-    const copied = await target.copyPages(source, indices);
-    for (const page of copied) target.addPage(page);
+  // ---------------------------------------------------------------------------
+  // Copying pages
+  //
+  // pdf-lib's copyPages() copies everything that is reachable from a page. Links, form fields,
+  // annotations, article beads and shared resources reach other pages, so an output would carry
+  // the content of pages that were not selected – invisible, but readable with any PDF tool.
+  // The functions below copy only what belongs to the selected pages.
+  // ---------------------------------------------------------------------------
+
+  /** `dict[key]` with references resolved, or undefined if it is missing or not a `type`. */
+  function lookupAs(dict, key, type) {
+    const value = dict.lookup(key);
+    return value instanceof type ? value : undefined;
+  }
+
+  // Field attributes that a widget inherits from its parent fields (PDF 32000-1, 12.7.3).
+  const INHERITABLE_FIELD_KEYS = ['FT', 'Ff', 'V', 'DV', 'DA', 'Q', 'Opt', 'MaxLen'];
+
+  /**
+   * Cuts the widgets of form fields off the field tree. A widget's /Parent leads to its field
+   * and through /Kids to the other fields of the form (e.g. „antrag.iban“ next to
+   * „antrag.gehalt“), including their values and pages. The outputs have no form (AcroForm)
+   * anyway; the widgets keep their appearance and the inherited field attributes.
+   * Modifies `doc`, which must be a private parse of the file.
+   */
+  function detachWidgets(lib, doc) {
+    const { PDFArray, PDFDict, PDFName } = lib;
+    const parentKey = PDFName.of('Parent');
+    for (const page of doc.getPages()) {
+      const annots = lookupAs(page.node, PDFName.of('Annots'), PDFArray);
+      if (!annots) continue;
+      for (let i = 0; i < annots.size(); i++) {
+        const annot = annots.lookup(i);
+        if (!(annot instanceof PDFDict) || annot.lookup(PDFName.of('Subtype')) !== PDFName.of('Widget')) continue;
+        const ancestors = new Set();
+        for (let field = lookupAs(annot, parentKey, PDFDict); field && !ancestors.has(field); field = lookupAs(field, parentKey, PDFDict)) {
+          ancestors.add(field);
+          for (const key of INHERITABLE_FIELD_KEYS) {
+            const name = PDFName.of(key);
+            if (!annot.has(name) && field.has(name)) annot.set(name, field.get(name));
+          }
+        }
+        annot.delete(parentKey);
+      }
+    }
+  }
+
+  /** Loads a PDF whose pages are going to be copied (a private parse that may be modified). */
+  async function loadSourcePdf(lib, bytes, fileName) {
+    const doc = await loadPdf(bytes, { fileName });
+    detachWidgets(lib, doc);
+    return doc;
+  }
+
+  /**
+   * Adds every name token of PDF content ("/Im1 Do" → "Im1") to `names` – a superset of the
+   * resource names that the content uses. Escaped names are added decoded as well: pdf-lib
+   * decodes only upper-case escapes ("#2F") in dictionary keys, pdf.js both cases.
+   */
+  function collectNames(bytes, names) {
+    const decode = (pattern) => (name) =>
+      name.replace(pattern, (sequence, hex) => String.fromCharCode(parseInt(hex, 16)));
+    const decodeUpper = decode(/#([0-9A-F]{2})/g);
+    const decodeAny = decode(/#([0-9A-Fa-f]{2})/g);
+    for (let i = 0; i < bytes.length; i++) {
+      if (bytes[i] !== 0x2f) continue; // "/"
+      let name = '';
+      let end = i + 1;
+      for (; end < bytes.length && !isPdfDelimiterOrWhitespace(bytes[end]); end++) {
+        name += String.fromCharCode(bytes[end]);
+      }
+      names.add(name);
+      if (name.includes('#')) {
+        names.add(decodeUpper(name));
+        names.add(decodeAny(name));
+      }
+      i = end - 1;
+    }
+  }
+
+  /**
+   * Names of the resources that a page may use: all name tokens of its content and of the form
+   * XObjects, tiling patterns and Type 3 glyphs that it uses (without own /Resources these use
+   * the page's resources), and of annotation appearances without own /Resources (PDFium falls
+   * back to the page's resources for them). Throws if a content stream cannot be decoded.
+   */
+  function usedResourceNames(lib, node, resources) {
+    const { PDFArray, PDFDict, PDFName, PDFRawStream, PDFStream } = lib;
+    const context = node.context;
+    const names = new Set();
+    const scanned = new Set();
+    const scan = (value) => {
+      const stream = context.lookup(value);
+      if (scanned.has(stream)) return;
+      scanned.add(stream);
+      if (!(stream instanceof PDFRawStream) || stream.dict.has(PDFName.of('DecodeParms'))) {
+        throw new Error('Unsupported content stream.');
+      }
+      collectNames(lib.decodePDFRawStream(stream).decode(), names);
+    };
+
+    const contents = node.lookup(PDFName.of('Contents'));
+    if (contents instanceof PDFArray) {
+      for (let i = 0; i < contents.size(); i++) scan(contents.get(i));
+    } else if (contents !== undefined) {
+      scan(contents);
+    }
+
+    const resourcesKey = PDFName.of('Resources');
+    const annots = lookupAs(node, PDFName.of('Annots'), PDFArray);
+    for (const annot of annots ? annots.asArray().map((entry) => context.lookup(entry)) : []) {
+      const appearances = annot instanceof PDFDict ? lookupAs(annot, PDFName.of('AP'), PDFDict) : undefined;
+      for (const appearance of appearances ? appearances.values() : []) {
+        const states = context.lookup(appearance);
+        for (const value of states instanceof PDFDict ? states.values() : [appearance]) {
+          const stream = context.lookup(value);
+          if (stream instanceof PDFStream && !stream.dict.has(resourcesKey)) scan(value);
+        }
+      }
+    }
+
+    const subtypeKey = PDFName.of('Subtype');
+    const xObjects = lookupAs(resources, PDFName.of('XObject'), PDFDict);
+    const patterns = lookupAs(resources, PDFName.of('Pattern'), PDFDict);
+    const fonts = lookupAs(resources, PDFName.of('Font'), PDFDict);
+    const usedEntries = (dict) => (dict ? dict.entries().filter(([name]) => names.has(name.decodeText())) : []);
+    let count;
+    do {
+      count = names.size;
+      for (const [, value] of usedEntries(xObjects)) {
+        const xObject = context.lookup(value);
+        if (xObject instanceof PDFStream && xObject.dict.lookup(subtypeKey) === PDFName.of('Form')) scan(value);
+      }
+      for (const [, value] of usedEntries(patterns)) {
+        if (context.lookup(value) instanceof PDFStream) scan(value); // tiling pattern
+      }
+      for (const [, value] of usedEntries(fonts)) {
+        const font = context.lookup(value);
+        const glyphs = font instanceof PDFDict && font.lookup(subtypeKey) === PDFName.of('Type3')
+          ? lookupAs(font, PDFName.of('CharProcs'), PDFDict)
+          : undefined;
+        if (glyphs) for (const [, glyph] of glyphs.entries()) scan(glyph);
+      }
+    } while (names.size !== count);
+    return names;
+  }
+
+  // Resource categories that are looked up by name from content streams.
+  const PRUNABLE_RESOURCES = ['ExtGState', 'Font', 'Pattern', 'Properties', 'Shading', 'XObject'];
+
+  /**
+   * The page's resources without the ones its content does not use, or undefined if nothing
+   * can be dropped. Pages often share one resource dictionary (or inherit it from the page
+   * tree) that lists the images and fonts of all pages. If the content cannot be read, all
+   * resources are kept.
+   */
+  function usedResources(lib, node) {
+    const { PDFDict, PDFName } = lib;
+    let resources;
+    let names;
+    try {
+      resources = node.Resources();
+      if (!resources) return undefined;
+      names = usedResourceNames(lib, node, resources);
+    } catch (err) {
+      return undefined;
+    }
+    let pruned;
+    for (const category of PRUNABLE_RESOURCES) {
+      const key = PDFName.of(category);
+      const entries = lookupAs(resources, key, PDFDict);
+      if (!entries) continue;
+      const all = entries.entries();
+      const used = all.filter(([name]) => names.has(name.decodeText()));
+      if (used.length === all.length) continue;
+      if (!pruned) pruned = resources.clone();
+      pruned.set(key, PDFDict.fromMapWithContext(new Map(used), node.context));
+    }
+    return pruned;
+  }
+
+  /** True for a link annotation that jumps to a page of the source that is not copied. */
+  function linksToOtherPage(lib, annot, copiedPages) {
+    const { PDFArray, PDFDict, PDFName, PDFPageLeaf, PDFRef } = lib;
+    if (!(annot instanceof PDFDict) || annot.lookup(PDFName.of('Subtype')) !== PDFName.of('Link')) return false;
+    let dest = annot.lookup(PDFName.of('Dest'));
+    if (dest === undefined) {
+      const action = lookupAs(annot, PDFName.of('A'), PDFDict);
+      if (action && action.lookup(PDFName.of('S')) === PDFName.of('GoTo')) dest = action.lookup(PDFName.of('D'));
+    }
+    if (!(dest instanceof PDFArray) || dest.size() === 0) return false;
+    const target = dest.get(0);
+    return target instanceof PDFRef && !copiedPages.has(target) && annot.context.lookup(target) instanceof PDFPageLeaf;
+  }
+
+  /**
+   * A private clone of a page dictionary to copy from: unused resources and links to pages
+   * that are not copied are dropped, and so are article beads (they lead through the whole
+   * article, i.e. to other pages).
+   */
+  function pageForCopy(lib, page, copiedPages) {
+    const { PDFArray, PDFName } = lib;
+    const node = page.node.clone();
+    const resources = usedResources(lib, page.node);
+    if (resources) node.set(PDFName.of('Resources'), resources);
+    const annotsKey = PDFName.of('Annots');
+    const annots = lookupAs(page.node, annotsKey, PDFArray);
+    if (annots) {
+      const context = page.node.context;
+      const kept = annots.asArray().filter((annot) => !linksToOtherPage(lib, context.lookup(annot), copiedPages));
+      if (kept.length < annots.size()) node.set(annotsKey, context.obj(kept));
+    }
+    node.delete(PDFName.of('B'));
+    return node;
+  }
+
+  /** Optional content (layers) of an output document, collected from the copied pages. */
+  function createLayers() {
+    return { groups: new Set(), off: new Set(), order: [] };
+  }
+
+  /**
+   * Adds the layers that the pages copied from `source` to `target` with `copier` use to
+   * `layers`, keeping their default visibility and their order in the layer panel.
+   */
+  function collectLayers(lib, source, target, copier, layers) {
+    const { PDFArray, PDFDict, PDFHexString, PDFName, PDFRef, PDFString } = lib;
+    const properties = lookupAs(source.catalog, PDFName.of('OCProperties'), PDFDict);
+    const groups = properties && lookupAs(properties, PDFName.of('OCGs'), PDFArray);
+    if (!groups) return;
+    const config = lookupAs(properties, PDFName.of('D'), PDFDict);
+    // Groups that no copied page uses have not been copied and are left out.
+    const copied = (value) => (value instanceof PDFRef ? copier.traversedObjects.get(value) : undefined);
+    const ownGroups = new Set(groups.asArray().map(copied).filter(Boolean));
+    const listed = (key) => {
+      const list = config && lookupAs(config, PDFName.of(key), PDFArray);
+      return new Set(list ? list.asArray().map(copied).filter((ref) => ownGroups.has(ref)) : []);
+    };
+    const on = listed('ON');
+    const off = listed('OFF');
+    const baseStateOff = Boolean(config) && config.lookup(PDFName.of('BaseState')) === PDFName.of('OFF');
+    for (const group of ownGroups) {
+      layers.groups.add(group);
+      if (off.has(group) || (baseStateOff && !on.has(group))) layers.off.add(group);
+    }
+
+    const visited = new Set();
+    const filterOrder = (list) => {
+      const result = [];
+      if (visited.has(list)) return result;
+      visited.add(list);
+      for (const item of list.asArray()) {
+        const value = source.context.lookup(item);
+        if (value instanceof PDFArray) {
+          const nested = filterOrder(value);
+          if (nested.some((entry) => !(entry instanceof PDFString || entry instanceof PDFHexString))) {
+            result.push(target.context.obj(nested));
+          }
+        } else if (ownGroups.has(copied(item))) {
+          result.push(copied(item));
+        } else if (value instanceof PDFString || value instanceof PDFHexString) {
+          result.push(value.clone()); // label of a nested list
+        }
+      }
+      return result;
+    };
+    const order = config && lookupAs(config, PDFName.of('Order'), PDFArray);
+    if (order) layers.order.push(...filterOrder(order));
+  }
+
+  /** Writes the collected layers into the catalog of the output document. */
+  function writeLayers(lib, output, layers) {
+    if (layers.groups.size === 0) return;
+    const config = {};
+    if (layers.off.size > 0) config.OFF = Array.from(layers.off);
+    if (layers.order.length > 0) config.Order = layers.order;
+    output.catalog.set(
+      lib.PDFName.of('OCProperties'),
+      output.context.obj({ OCGs: Array.from(layers.groups), D: config })
+    );
+  }
+
+  /**
+   * Appends copies of the given pages of `source` to `target`.
+   * @param {object} lib pdf-lib
+   * @param {import('pdf-lib').PDFDocument} target
+   * @param {import('pdf-lib').PDFDocument} source loaded with loadSourcePdf
+   * @param {number[]} indices validated 0-based page indices
+   * @param {ReturnType<typeof createLayers>} layers
+   */
+  function appendPages(lib, target, source, indices, layers) {
+    const { PDFNull, PDFObjectCopier, PDFPage, PDFPageLeaf, PDFPageTree } = lib;
+    const sourcePages = source.getPages();
+    // The copies get their references up front, so that links between copied pages can be
+    // pointed at the copies.
+    const targetRefs = indices.map(() => target.context.nextRef());
+    const copiedPages = new Map();
+    indices.forEach((index, i) => {
+      if (!copiedPages.has(sourcePages[index].ref)) copiedPages.set(sourcePages[index].ref, targetRefs[i]);
+    });
+
+    const copier = PDFObjectCopier.for(source.context, target.context);
+    // References to pages (from links, annotations, actions …) would copy those pages – and
+    // through /Parent the page tree – into the output. Point them at the copy of the page, or
+    // at null if the page is not copied.
+    const copyIndirectObject = copier.copyPDFIndirectObject;
+    copier.copyPDFIndirectObject = (ref) => {
+      if (copiedPages.has(ref)) return copiedPages.get(ref);
+      const value = source.context.lookup(ref);
+      if (value instanceof PDFPageLeaf || value instanceof PDFPageTree || value === source.catalog) return PDFNull;
+      return copyIndirectObject(ref);
+    };
+
+    indices.forEach((index, i) => {
+      const node = copier.copy(pageForCopy(lib, sourcePages[index], copiedPages));
+      target.context.assign(targetRefs[i], node);
+      target.addPage(PDFPage.of(node, targetRefs[i], target));
+    });
+    collectLayers(lib, source, target, copier, layers);
   }
 
   /**
@@ -590,19 +948,21 @@
     const lib = getPdfLib();
     const loaded = new Map(); // same bytes object → loaded only once
     const output = await createOutputDocument(lib, title);
+    const layers = createLayers();
 
     for (const { bytes, name, pages } of entries) {
       let doc = bytes ? loaded.get(bytes) : undefined;
       if (!doc) {
-        doc = await loadPdf(bytes, { fileName: name });
+        doc = await loadSourcePdf(lib, bytes, name);
         loaded.set(bytes, doc);
       }
       const pageCount = doc.getPageCount();
       const indices = pages === undefined || pages === null
         ? expandRange(1, pageCount)
         : validatePageIndices(pages, pageCount, name);
-      await appendPages(output, doc, indices);
+      appendPages(lib, output, doc, indices, layers);
     }
+    writeLayers(lib, output, layers);
     return output.save();
   }
 
@@ -645,7 +1005,7 @@
     });
 
     const lib = getPdfLib();
-    const source = await loadPdf(bytes, { fileName });
+    const source = await loadSourcePdf(lib, bytes, fileName);
     const pageCount = source.getPageCount();
     const validGroups = snapshot.map((group, groupIndex) =>
       validatePageIndices(group, pageCount, fileName, groupIndex)
@@ -654,7 +1014,9 @@
     const outputs = [];
     for (const group of validGroups) {
       const output = await createOutputDocument(lib);
-      await appendPages(output, source, group);
+      const layers = createLayers();
+      appendPages(lib, output, source, group, layers);
+      writeLayers(lib, output, layers);
       outputs.push(await output.save());
     }
     return outputs;

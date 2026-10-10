@@ -18,6 +18,8 @@
   // common file-system limits (255 bytes per name), also for ZIP entries extracted on Windows.
   const MAX_BASE_NAME_CHARS = 80;
   const MERGE_THUMB_SIZE = { width: 46, height: 62 };
+  // Feedback while typing is only read out to screen readers once the input has been stable this long.
+  const ANNOUNCE_DELAY_MS = 700;
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const DRAG_TYPE = 'application/x-pdf-tool-item';
 
@@ -152,6 +154,7 @@
     status: byId('status'),
     busy: byId('busy'),
     busyText: byId('busy-text'),
+    announcer: byId('sr-announcer'),
     tabMerge: byId('tab-merge'),
     tabSplit: byId('tab-split'),
     panelMerge: byId('panel-merge'),
@@ -205,6 +208,7 @@
   const split = {
     file: null, // { name, size, bytes, pageCount, baseName }
     token: 0, // increments whenever the file changes; stale async work checks it
+    loadSeq: 0, // increments per chosen file; only the most recent load may install its file
     previewPromise: null,
     preview: null,
     observer: null,
@@ -218,6 +222,8 @@
 
   let busyCount = 0;
   let previewEnabled = false;
+  let announceTimer = 0;
+  let mergeAddChain = Promise.resolve();
   const mergeThumbQueue = createTaskQueue(1);
   const splitThumbQueue = createTaskQueue(2);
 
@@ -238,16 +244,54 @@
     els.status.classList.remove('is-error', 'is-success');
   }
 
+  /**
+   * Reads `message` out to screen readers via the visually hidden live region #sr-announcer
+   * (for changes that have no visible live region of their own). With `settled: true` (feedback
+   * while typing) it waits until the input has been stable for ANNOUNCE_DELAY_MS, so half-typed
+   * intermediate states are not read out, and skips a message that was just read out.
+   */
+  function announce(message, { settled = false } = {}) {
+    clearTimeout(announceTimer);
+    if (!settled) {
+      els.announcer.textContent = message;
+      return;
+    }
+    announceTimer = setTimeout(() => {
+      if (els.announcer.textContent !== message) els.announcer.textContent = message;
+    }, ANNOUNCE_DELAY_MS);
+  }
+
   const isBusy = () => busyCount > 0;
 
   function setBusyMessage(message) {
     els.busyText.textContent = message;
   }
 
-  async function withBusy(message, task) {
+  /** True if focus is on <body>, or on an element that was disabled or hidden (browsers move it away lazily). */
+  function focusIsLost() {
+    const active = document.activeElement;
+    return !active || active === document.body || active.disabled === true || active.getClientRects().length === 0;
+  }
+
+  /** If focus is lost, moves it to the first of `candidates` that can take it. */
+  function restoreFocus(candidates) {
+    for (const element of candidates) {
+      if (!focusIsLost()) return;
+      if (element && element !== document.body && element.isConnected && !element.disabled) element.focus();
+    }
+  }
+
+  /**
+   * Runs `task` while showing the busy indicator and disabling the action buttons. Disabling (or
+   * hiding) the focused control drops focus to <body>; afterwards it returns to that control or,
+   * if the control cannot take focus any more, to `focusFallback`.
+   */
+  async function withBusy(message, task, focusFallback = null) {
+    const focused = document.activeElement;
     busyCount += 1;
     setBusyMessage(message);
     els.busy.hidden = false;
+    announce(message);
     refreshControls();
     try {
       await yieldToBrowser();
@@ -256,6 +300,7 @@
       busyCount -= 1;
       if (busyCount === 0) els.busy.hidden = true;
       refreshControls();
+      restoreFocus([focused, focusFallback]);
     }
   }
 
@@ -520,7 +565,17 @@
     return merge.items.findIndex((item) => item.id === id);
   }
 
-  async function addMergeFiles(files) {
+  /**
+   * Adds files to the merge list. Batches run one after another, so files added while an earlier
+   * batch is still loading end up behind it (the list order is the page order of the result).
+   */
+  function addMergeFiles(files) {
+    const run = () => addMergeFilesNow(files);
+    mergeAddChain = mergeAddChain.then(run, run);
+    return mergeAddChain;
+  }
+
+  async function addMergeFilesNow(files) {
     const message = files.length === 1 ? 'Datei wird geladen …' : `${files.length} Dateien werden geladen …`;
     await withBusy(message, async () => {
       const added = [];
@@ -531,6 +586,7 @@
           const item = { id: `f${merge.nextId++}`, ...loaded, range: '', pages: null, error: null };
           merge.items.push(item);
           added.push(item);
+          clearMergeResult();
           renderMergeList();
           queueMergeThumbnail(item);
         } catch (err) {
@@ -573,6 +629,7 @@
     if (from === -1 || to < 0 || to >= merge.items.length) return;
     const [item] = merge.items.splice(from, 1);
     merge.items.splice(to, 0, item);
+    clearMergeResult();
     renderMergeList();
 
     const refs = merge.nodes.get(id);
@@ -586,6 +643,7 @@
     const index = findMergeIndex(id);
     if (index === -1) return;
     const [item] = merge.items.splice(index, 1);
+    clearMergeResult();
     renderMergeList();
 
     const neighbour = merge.items[index] || merge.items[index - 1];
@@ -596,7 +654,9 @@
 
   function sortMergeItems() {
     const collator = new Intl.Collator('de', { numeric: true, sensitivity: 'base' });
+    const before = merge.items.slice();
     merge.items.sort((a, b) => collator.compare(a.name, b.name));
+    if (merge.items.some((item, index) => item !== before[index])) clearMergeResult();
     renderMergeList();
     setStatus('Dateien nach Dateiname sortiert.');
   }
@@ -629,7 +689,7 @@
     const sources = items.map((item) => ({ bytes: item.bytes, pages: item.pages || undefined, name: item.name }));
     const totalPages = items.reduce((sum, item) => sum + mergeSelectedPageCount(item), 0);
 
-    await withBusy(`${pagesLabel(totalPages)} werden zusammengeführt …`, async () => {
+    await withBusy(`${pagesLabel(totalPages)} ${totalPages === 1 ? 'wird' : 'werden'} zusammengeführt …`, async () => {
       try {
         const bytes = await Core.mergePdfs(sources, { title: Core.stripPdfExtension(fileName) });
         const blob = new Blob([bytes], { type: 'application/pdf' });
@@ -661,6 +721,8 @@
     );
     els.mergeResult.hidden = false;
     revealElement(els.mergeResult);
+    // The run button is disabled while merging, which drops its focus: continue at the result.
+    if (focusIsLost()) link.focus({ preventScroll: true });
     link.click();
   }
 
@@ -733,6 +795,7 @@
       merge.items.splice(target.index, 0, item);
       renderMergeList();
       if (from !== target.index) {
+        clearMergeResult();
         setStatus(`„${item.name}“ ist jetzt an Position ${target.index + 1} von ${merge.items.length}.`);
       }
     });
@@ -761,10 +824,14 @@
       const li = event.target.closest('.merge-item');
       const item = merge.items[findMergeIndex(li.dataset.id)];
       if (!item) return;
+      const previousError = item.error;
       item.range = event.target.value;
       validateMergeItem(item);
       renderMergeItemValidity(item);
       updateMergeControls();
+      clearMergeResult();
+      // The inline error is not a live region (that would read out every keystroke): announce it once settled.
+      if (item.error !== previousError) announce(item.error || '', { settled: true });
     });
 
     els.mergeList.addEventListener('keydown', (event) => {
@@ -1056,6 +1123,7 @@
   }
 
   function resetSplit() {
+    split.loadSeq += 1; // a file still loading must not show up after the reset
     stopSplitPreview();
     split.file = null;
     split.thumbs = [];
@@ -1071,9 +1139,17 @@
 
   async function loadSplitFile(files) {
     const file = files[0];
+    // The drop targets stay usable while a file loads: if another file is chosen meanwhile,
+    // only the most recently chosen one may be installed (or report its error).
+    const seq = ++split.loadSeq;
+    // After a successful load the (focused) file input is hidden, so focus moves on to „Andere Datei wählen“.
+    const focusFallback = els.splitReset;
     await withBusy('Datei wird geladen …', async () => {
+      let installing = false;
       try {
         const loaded = await readPdfFile(file);
+        if (seq !== split.loadSeq) return;
+        installing = true; // from here on loadSeq moves on (resetSplit), errors are still this file's
         resetSplit();
         const baseName = outputBaseName(loaded.name);
         split.file = { ...loaded, baseName };
@@ -1090,9 +1166,10 @@
         const extra = files.length > 1 ? ' Es wird jeweils nur eine Datei geteilt – weitere wurden ignoriert.' : '';
         setStatus(`„${loaded.name}“ geladen (${pagesLabel(loaded.pageCount)}).${extra}`);
       } catch (err) {
+        if (!installing && seq !== split.loadSeq) return; // a later choice replaced this file
         setStatus(errorMessage(err, file.name), 'error');
       }
-    });
+    }, focusFallback);
   }
 
   /** "Bericht 2026.pdf" -> "Bericht 2026" (sanitized, at most MAX_BASE_NAME_CHARS characters). */
@@ -1118,7 +1195,15 @@
 
   function setExtractPages(pages) {
     els.splitExtract.value = pages.length ? Core.formatPageGroup(pages) : '';
+    splitSettingsChanged();
+  }
+
+  /** The user changed how to split: drop the now outdated results and update the preview. */
+  function splitSettingsChanged() {
+    clearSplitResults();
     updateSplit();
+    // #split-preview is not a live region (it changes on every keystroke): announce it once settled.
+    announce(els.splitPreview.textContent, { settled: true });
   }
 
   function toggleExtractPage(index, extendRange) {
@@ -1263,6 +1348,8 @@
     els.splitResults.append(...children);
     els.splitResults.hidden = false;
     revealElement(els.splitResults);
+    // The run button is disabled while splitting, which drops its focus: continue at the result.
+    if (focusIsLost()) (autoDownload || list.querySelector('a')).focus({ preventScroll: true });
     if (autoDownload) autoDownload.click();
   }
 
@@ -1277,9 +1364,9 @@
       els.splitInput.focus();
     });
 
-    for (const radio of els.splitModes) radio.addEventListener('change', updateSplit);
+    for (const radio of els.splitModes) radio.addEventListener('change', splitSettingsChanged);
     for (const input of [els.splitChunk, els.splitRanges, els.splitExtract]) {
-      input.addEventListener('input', updateSplit);
+      input.addEventListener('input', splitSettingsChanged);
       input.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') {
           event.preventDefault();

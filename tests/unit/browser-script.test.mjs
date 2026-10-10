@@ -13,7 +13,8 @@ const corePath = fileURLToPath(new URL('../../js/pdf-core.js', import.meta.url))
 const vendorPdfLibPath = fileURLToPath(new URL('../../vendor/pdf-lib.min.js', import.meta.url));
 const source = readFileSync(corePath, 'utf8');
 const nodeModule = require('../../js/pdf-core.js');
-const { PDFDocument } = require('pdf-lib');
+const pdfLib = require('pdf-lib');
+const { PDFDocument } = pdfLib;
 
 const PDF_HEADER = new TextEncoder().encode('%PDF-1.7\n%%EOF\n');
 
@@ -27,16 +28,23 @@ function runAsBrowserScript(globals = {}) {
 /** Converts values from another realm into plain values of this realm. */
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
-/** Minimal stand-in for pdf-lib that records how it is called. */
+/**
+ * pdf-lib with a stand-in for PDFDocument.load that records how it is called and returns a new
+ * document with `pageCount` pages. All other exports are the real ones (loadPdf checks the page
+ * tree of the loaded document with them).
+ */
 function createFakePdfLib({ pageCount = 2, loadError } = {}) {
   const calls = [];
   const fake = {
+    ...pdfLib,
     calls,
     PDFDocument: {
       async load(bytes, options) {
         calls.push({ bytes, options });
         if (loadError) throw loadError;
-        return { getPageCount: () => pageCount, fake: true };
+        const doc = await PDFDocument.create();
+        for (let i = 0; i < pageCount; i++) doc.addPage();
+        return Object.assign(doc, { fake: true });
       },
     },
   };
@@ -136,6 +144,26 @@ describe('pdf-core.js as a classic browser script', () => {
 
       const extracted = await PdfCore.extractPages(bytes, PdfCore.parsePageList('4-3', 4));
       assert.deepEqual(await widths(extracted), [103, 102]);
+
+      // The page copy relies on internals of pdf-lib's object copier; check them in the bundle:
+      // page 1 links to page 2 (which must not be copied along) and shows a hidden layer.
+      const { PDFName } = pdfLib;
+      const linked = await PDFDocument.create();
+      const [page1, page2] = [linked.addPage([100, 200]), linked.addPage([101, 200])];
+      const layer = linked.context.register(linked.context.obj({ Type: 'OCG', Name: 'Ebene' }));
+      page1.node.set(PDFName.of('Resources'), linked.context.obj({ Properties: { L: layer } }));
+      page1.node.set(PDFName.of('Contents'), linked.context.register(linked.context.stream('/OC /L BDC 0 0 9 9 re f EMC')));
+      page1.node.set(PDFName.of('Annots'), linked.context.obj([
+        linked.context.obj({ Type: 'Annot', Subtype: 'Link', Rect: [0, 0, 9, 9], A: { S: 'GoTo', D: [page2.ref, 'Fit'] } }),
+      ]));
+      linked.catalog.set(PDFName.of('OCProperties'), linked.context.obj({ OCGs: [layer], D: { OFF: [layer] } }));
+      const firstPage = await PDFDocument.load(new Uint8Array(await PdfCore.extractPages(await linked.save(), [0])));
+      const pageObjects = Array.from(firstPage.context.enumerateIndirectObjects())
+        .filter(([, object]) => object.get && object.get(PDFName.of('Type')) === PDFName.of('Page'));
+      assert.equal(pageObjects.length, 1);
+      const properties = firstPage.catalog.lookup(PDFName.of('OCProperties'));
+      const pageLayer = firstPage.getPage(0).node.Resources().lookup(PDFName.of('Properties')).get(PDFName.of('L'));
+      assert.deepEqual(properties.lookup(PDFName.of('D')).lookup(PDFName.of('OFF')).asArray(), [pageLayer]);
 
       const encrypted = await PDFDocument.create();
       encrypted.addPage();

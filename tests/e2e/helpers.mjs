@@ -69,6 +69,18 @@ export async function createPdf(pageCount, { baseWidth = 100, label = 'Seite' } 
   return doc.save();
 }
 
+let slowPdf;
+
+/**
+ * A 3000-page PDF (widths 900 … 3899 pt) that takes the browser several hundred milliseconds to
+ * load – long enough to choose another file meanwhile (race tests). Created once per worker.
+ * @returns {Promise<Uint8Array>}
+ */
+export function createSlowPdf() {
+  slowPdf ??= createPdf(3000, { baseWidth: 900 });
+  return slowPdf;
+}
+
 /** A syntactically valid PDF whose trailer declares encryption (pdf-lib refuses to load it). */
 export async function createEncryptedPdf() {
   const doc = await PDFDocument.create();

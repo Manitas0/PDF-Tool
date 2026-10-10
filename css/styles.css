@@ -11,9 +11,10 @@
   --surface-3: #eef0f6;
   --border: #dfe3ec;
   --border-strong: #c3c9d8;
+  --input-border: #878fa3; /* the only visible edge of a text field: ≥ 3:1 against --surface and --surface-2 */
   --text: #171a23;
   --text-muted: #555e72;
-  --text-subtle: #6b7387;
+  --text-subtle: #646c80; /* ≥ 4.5:1 on --bg, --surface and --surface-2 */
   --tabs-bg: #e9ecf4;
   --tab-active-bg: #ffffff;
 
@@ -63,6 +64,7 @@
     --surface-3: #242a37;
     --border: #2b3242;
     --border-strong: #3d4558;
+    --input-border: #6b7387;
     --text: #e8eaf0;
     --text-muted: #a4acbd;
     --text-subtle: #8b93a6;
@@ -178,6 +180,11 @@ input {
   width: 0;
   height: 0;
   overflow: hidden;
+}
+
+/* Static hint in index.html for a page whose files are missing: visible only if this stylesheet did not load. */
+.load-hint {
+  display: none;
 }
 
 .visually-hidden {
@@ -707,7 +714,7 @@ main:focus {
   width: 100%;
   min-height: 42px;
   padding: 8px 12px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--input-border);
   border-radius: 10px;
   background: var(--surface);
   color: var(--text);
@@ -1043,7 +1050,7 @@ main:focus {
 .merge-item-range {
   min-height: 36px;
   padding: 5px 10px;
-  font-size: 0.92rem;
+  font-size: 1rem; /* below 16px iOS Safari zooms the page in when the field is focused */
 }
 
 .merge-item-error {
@@ -1198,10 +1205,9 @@ main:focus {
   line-height: 1.35;
 }
 
+/* Wrap instead of truncating: the end of the name (e.g. "_S4-6.pdf") tells the files apart. */
 .download-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-weight: 550;
   font-size: 0.92rem;
 }
@@ -1494,11 +1500,9 @@ main:focus {
   }
 }
 
-.page-thumb.is-unused {
-  opacity: 0.4;
-}
-
+/* Pages in no output file: dim the page image only, the page number must stay readable. */
 .page-thumb.is-unused .page-thumb-frame {
+  opacity: 0.4;
   filter: grayscale(1);
 }
 

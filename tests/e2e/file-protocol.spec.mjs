@@ -1,9 +1,13 @@
 // The app must also work when index.html is opened directly from disk
 // (file://), e.g. by double-clicking it – no server involved.
+import { copyFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   test,
   expect,
   INDEX_FILE_URL,
+  PROJECT_ROOT,
   addMergeFiles,
   captureDownload,
   createPdf,
@@ -48,4 +52,26 @@ test('Teilen als ZIP funktioniert über file://', async ({ page }) => {
   const zip = await readZip(await downloadBytes(download));
   expect(zip.names).toEqual(['handbuch_S1-2.pdf', 'handbuch_S4-3.pdf']);
   expect(await readPageWidths(zip.files.get('handbuch_S4-3.pdf'))).toEqual([303, 302]);
+});
+
+test.describe('index.html ohne die übrigen Dateien (direkt aus dem ZIP-Archiv geöffnet)', () => {
+  // css/, js/ and vendor/ are missing on purpose.
+  test.use({ allowedErrors: [/ERR_FILE_NOT_FOUND/] });
+
+  test('zeigt einen Hinweis zum Entpacken', async ({ page }, testInfo) => {
+    // Hidden as long as the stylesheet is there.
+    await expect(page.locator('.load-hint')).toBeHidden();
+
+    const dir = testInfo.outputPath('nur-index');
+    await mkdir(dir, { recursive: true });
+    await copyFile(join(PROJECT_ROOT, 'index.html'), join(dir, 'index.html'));
+    await page.goto(pathToFileURL(join(dir, 'index.html')).href);
+
+    const hint = page.locator('.load-hint');
+    await expect(hint).toBeVisible();
+    await expect(hint).toContainText('entpacken');
+    // The unstyled header logo must not fill the whole window.
+    const logo = await page.locator('.logo').boundingBox();
+    expect(logo.width).toBeLessThanOrEqual(48);
+  });
 });

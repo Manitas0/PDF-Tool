@@ -7,6 +7,7 @@ import {
   createBrokenPdf,
   createEncryptedPdf,
   createPdf,
+  createSlowPdf,
   downloadBytes,
   dropFiles,
   expectIdle,
@@ -200,4 +201,83 @@ test('Dateien per Drag & Drop hinzufügen; Drop außerhalb navigiert nicht weg',
   expect(outside.dragover, 'dragover außerhalb der Dropzone muss abgefangen werden').toBe(true);
   expect(outside.drop, 'drop außerhalb der Dropzone muss abgefangen werden').toBe(true);
   expect(page.url()).toBe(url);
+});
+
+test('Reihenfolge per Ziehen ändern', async ({ page }) => {
+  // All items have to be in view: Playwright's native drag does not deliver dragover/drop to
+  // an element below the fold.
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await addMergeFiles(page, [fileA, fileB, fileC]);
+  await expect(itemNames(page)).toHaveText(['a.pdf', 'b.pdf', 'c.pdf']);
+
+  // Drag a.pdf by its grip onto the lower half of the last item -> [b, c, a]
+  const last = mergeItems(page).nth(2);
+  const box = await last.boundingBox();
+  await mergeItems(page).nth(0).locator('.merge-item-grip').dragTo(last, { targetPosition: { x: 20, y: box.height - 5 } });
+  await expect(itemNames(page)).toHaveText(['b.pdf', 'c.pdf', 'a.pdf']);
+  await expect(page.locator('#merge-list .is-drop-before, #merge-list .is-drop-after, #merge-list .is-dragging')).toHaveCount(0);
+
+  const download = await captureDownload(page, () => page.locator('#merge-run').click());
+  expect(await readPageWidths(await downloadBytes(download))).toEqual([200, 201, 202, 203, 204, 300, 100, 101, 102]);
+});
+
+test('Dateien, die während des Ladens hinzukommen, landen hinter den vorherigen', async ({ page }) => {
+  const slow = pdfFile('1-gross.pdf', await createSlowPdf());
+  await addMergeFiles(page, [slow, pdfFile('2-a.pdf', fileA.buffer)]);
+  // Added while the large file is still loading; it loads much faster, but must end up last.
+  await page.waitForTimeout(50);
+  await addMergeFiles(page, [pdfFile('3-b.pdf', fileB.buffer)]);
+
+  await expect(mergeItems(page)).toHaveCount(3, { timeout: 15_000 });
+  await expectIdle(page);
+  await expect(itemNames(page)).toHaveText(['1-gross.pdf', '2-a.pdf', '3-b.pdf']);
+});
+
+test('ein altes Ergebnis verschwindet, sobald sich die Auswahl ändert', async ({ page }) => {
+  const result = page.locator('#merge-result');
+  const download = page.locator('#merge-download');
+  const merge = async () => {
+    await captureDownload(page, () => page.locator('#merge-run').click());
+    await expect(download).toBeVisible();
+  };
+  const expectNoResult = async () => {
+    await expect(result).toBeHidden();
+    await expect(download).toHaveCount(0);
+  };
+
+  await addMergeFiles(page, [fileA, fileB, fileC]);
+  await expect(mergeItems(page)).toHaveCount(3);
+
+  // Sorting a list that is already sorted changes nothing, so the result stays.
+  await merge();
+  await page.locator('#merge-sort').click();
+  await expect(download).toBeVisible();
+
+  await mergeItems(page).nth(2).locator('.merge-item-up').click();
+  await expectNoResult();
+
+  await merge();
+  await page.locator('#merge-sort').click(); // [a, c, b] -> [a, b, c]
+  await expectNoResult();
+
+  await merge();
+  await mergeItems(page).nth(1).locator('.merge-item-range').fill('1-2');
+  await expectNoResult();
+
+  await merge();
+  await mergeItems(page).nth(2).locator('.merge-item-remove').click();
+  await expectNoResult();
+
+  await merge();
+  await addMergeFiles(page, [fileC]);
+  await expect(mergeItems(page)).toHaveCount(3);
+  await expectNoResult();
+
+  // Removing the files one by one (not with „Alle entfernen“) must not leave the result behind either.
+  await merge();
+  for (let count = 3; count > 0; count -= 1) {
+    await mergeItems(page).first().locator('.merge-item-remove').click();
+    await expect(mergeItems(page)).toHaveCount(count - 1);
+  }
+  await expectNoResult();
 });

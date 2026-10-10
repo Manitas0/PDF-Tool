@@ -7,11 +7,11 @@ const BASE_URL = `http://127.0.0.1:${PORT}`;
 const isCI = Boolean(process.env.CI);
 
 // Chromium on Linux replaces download names it cannot encode in the system locale with
-// "download". Under a POSIX/C locale this hits every name with umlauts, so make sure the
-// browser runs with a UTF-8 locale (no effect on macOS/Windows).
-const localeVars = [process.env.LC_ALL, process.env.LC_CTYPE, process.env.LANG].filter(Boolean);
-const hasUtf8Locale = localeVars.length > 0 && /utf-?8/i.test(localeVars[0]);
-const browserEnv = hasUtf8Locale ? undefined : { ...process.env, LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' };
+// "download", which hits every name with umlauts under a POSIX/C locale. A configured but
+// uninstalled locale (e.g. LANG=de_DE.UTF-8 in a container without generated locales)
+// silently falls back to ASCII as well, so on Linux always start the browser with the
+// built-in C.UTF-8 locale (no effect on macOS/Windows).
+const browserEnv = process.platform === 'linux' ? { ...process.env, LC_ALL: 'C.UTF-8' } : undefined;
 
 export default defineConfig({
   testDir: 'tests/e2e',

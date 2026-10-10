@@ -30,13 +30,16 @@ jobs:
       - name: Abhängigkeiten installieren
         run: npm ci --omit=optional
 
+      # `git status` instead of `git diff`: it also reports files that `npm run vendor` creates
+      # but that were never committed (untracked), which the deployed page would be missing.
       - name: Prüfen, ob vendor/ aktuell ist
         run: |
           npm run vendor
-          git diff --exit-code -- vendor || {
-            echo "::error::vendor/ passt nicht zu package-lock.json – bitte 'npm run vendor' ausführen und die Änderungen einchecken."
+          if [ -n "$(git status --porcelain -- vendor)" ]; then
+            git status --short -- vendor
+            echo "::error::vendor/ passt nicht zu package-lock.json – bitte 'npm run vendor' ausführen und die Änderungen (auch neue Dateien) einchecken."
             exit 1
-          }
+          fi
 
       - name: Unit-Tests
         run: npm test

@@ -54,6 +54,9 @@ Alles bleibt lokal:
   [pdf.js](https://mozilla.github.io/pdf.js/) und [JSZip](https://stuk.github.io/jszip/)).
 - Es wird nichts hochgeladen, es gibt keine Cookies, kein Tracking und keine externen Ressourcen
   (kein CDN, keine Webfonts). Alle Bibliotheken liegen im Ordner `vendor/`.
+- Eine Ergebnis-PDF enthält nur die gewählten Seiten: Andere Seiten und ihre Formularwerte werden nicht
+  unsichtbar mitkopiert, nicht benötigte Bilder und Schriften weitgehend entfernt, und ausgeblendete Ebenen
+  bleiben ausgeblendet.
 - Eine Content-Security-Policy unterbindet zusätzlich Netzwerkverbindungen aus der Seite heraus.
 - pdf.js läuft mit `isEvalSupported: false` (Schutz vor CVE-2024-4367).
 
@@ -68,7 +71,12 @@ Alles bleibt lokal:
 
 ### Lokal ohne Installation
 
-Repository herunterladen (*Code → Download ZIP* oder `git clone`) und **`index.html` doppelklicken**.
+1. Repository herunterladen: *Code → Download ZIP* oder `git clone`.
+2. Beim ZIP-Download **das Archiv zuerst vollständig entpacken** (Windows: Rechtsklick auf die ZIP-Datei →
+   „Alle extrahieren …“). Öffnet man `index.html` direkt im ZIP-Archiv, fehlen die Ordner `css/`, `js/`
+   und `vendor/` – die Seite erscheint dann ohne Gestaltung und funktioniert nicht.
+3. Im entpackten Ordner **`index.html` doppelklicken**.
+
 Die App läuft direkt aus dem Dateisystem (`file://`) – ganz ohne Server und Internetverbindung.
 
 ### Lokal mit Webserver
@@ -128,8 +136,11 @@ Wie die Angaben verwendet werden, hängt von der Stelle ab:
 
 - **Verschlüsselte bzw. passwortgeschützte PDFs werden nicht unterstützt.** Entferne den Schutz vorher
   mit einem anderen Programm.
-- **Lesezeichen (Outlines), Formularfelder (AcroForm) und interne Links** gehen beim Zusammenführen und
-  Teilen ggf. verloren. Der sichtbare Seiteninhalt bleibt erhalten.
+- **Lesezeichen (Outlines) und Formularfunktionen (AcroForm)** werden nicht übernommen: Ausgefüllte
+  Formularfelder bleiben sichtbar, lassen sich in der Ergebnis-PDF aber nicht mehr bearbeiten.
+- **Interne Links** bleiben erhalten, wenn sie direkt auf eine Seite zeigen, die ebenfalls in der
+  Ergebnis-PDF liegt. Links auf nicht übernommene Seiten werden entfernt; Links über benannte Sprungziele
+  (wie sie z. B. LaTeX erzeugt) funktionieren nicht mehr. Der sichtbare Seiteninhalt bleibt erhalten.
 - **Sehr große Dateien brauchen viel Arbeitsspeicher**, weil alles im Browser passiert. Auf schwächeren
   Geräten (z. B. älteren Smartphones) kann das an Grenzen stoßen.
 - Die Vorschaubilder sind optional: Kann pdf.js eine Seite nicht darstellen, funktioniert das
@@ -171,10 +182,10 @@ npm run serve                 # lokaler Server auf http://127.0.0.1:8080/
 - Damit die App auch über `file://` funktioniert, werden nur klassische `<script>`-Tags verwendet
   (keine ES-Module, kein `fetch()` lokaler Dateien, keine Inline-Skripte).
 - Bibliotheken aktualisieren: Version in `package.json` anheben, `npm install --omit=optional`,
-  `npm run vendor` ausführen und die geänderten Dateien in `vendor/` mit einchecken.
-- Die CI (GitHub Actions) prüft bei jedem Push und Pull Request, ob `vendor/` zu `package-lock.json` passt,
-  und führt Unit- und End-to-End-Tests aus. Schlägt ein Test fehl, steht der Playwright-Report als
-  Artefakt zum Download bereit.
+  `npm run vendor` ausführen und die geänderten und neuen Dateien in `vendor/` mit einchecken.
+- Die CI (GitHub Actions) prüft bei jedem Push und Pull Request, ob `vendor/` zu `package-lock.json` passt
+  (auch auf Dateien, die `npm run vendor` erzeugt, die aber nicht eingecheckt sind), und führt Unit- und
+  End-to-End-Tests aus. Schlägt ein Test fehl, steht der Playwright-Report als Artefakt zum Download bereit.
 
 ## Lizenzen von Drittanbietern
 
