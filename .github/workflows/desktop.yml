@@ -33,7 +33,15 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/desktop.yml'
+  # Manual start (Actions → Desktop → „Run workflow“). With „release“ ticked, the release
+  # v<version from desktop/package.json> is created on the selected commit – for when tags
+  # cannot be pushed.
   workflow_dispatch:
+    inputs:
+      release:
+        description: 'Release v<Version aus desktop/package.json> erstellen'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -122,13 +130,37 @@ jobs:
   release:
     name: GitHub Release erstellen
     needs: windows
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: desktop/package.json
+          sparse-checkout-cone-mode: false
+
+      # On a tag push the tag is the release (its version was checked in the windows job). On a
+      # manual run the tag is created from desktop/package.json – but never moved: an existing
+      # tag means this version was already released.
+      - name: Tag bestimmen
+        id: tag
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="v$(node -p "require('./desktop/package.json').version")"
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+              echo "::error::Den Tag $tag gibt es schon – für ein neues Release erst die Version in desktop/package.json erhöhen."
+              exit 1
+            fi
+          fi
+          echo "name=$tag" >> "$GITHUB_OUTPUT"
+
       - name: Artefakt herunterladen
         uses: actions/download-artifact@v4
         with:
@@ -138,6 +170,19 @@ jobs:
       - name: Release veröffentlichen
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          name: PDF-Tool ${{ steps.tag.outputs.name }}
           files: release/*.exe
           fail_on_unmatched_files: true
           generate_release_notes: true
+          body: |
+            PDFs zusammenführen und teilen – komplett lokal, ohne Upload.
+
+            **Windows-App herunterladen** (unten unter *Assets*):
+            - `PDF-Tool-Setup-….exe` – Installer mit Startmenü- und Desktop-Verknüpfung
+            - `PDF-Tool-…-portable.exe` – läuft ohne Installation, z. B. vom USB-Stick
+
+            Die App ist nicht signiert. Beim ersten Start zeigt Windows deshalb „Der Computer wurde durch
+            Windows geschützt“: auf **„Weitere Informationen“** und dann **„Trotzdem ausführen“** klicken.
+            Details stehen in der README unter „Windows-Desktop-App“.

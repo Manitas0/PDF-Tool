@@ -117,8 +117,9 @@ Updates und sendet keine Daten.
 
 ### Herunterladen
 
-- **Empfohlen – fertige Versionen:** im Repository unter **Releases** – sobald eine Version mit einem Git-Tag
-  `v…` (z. B. `v1.0.0`) veröffentlicht wurde.
+- **Empfohlen – fertige Versionen:** im Repository unter [**Releases**](https://github.com/Manitas0/PDF-Tool/releases/latest).
+  Ein Release entsteht durch einen Git-Tag `v…` (z. B. `v1.0.0`) oder von Hand unter *Actions* → *Desktop* →
+  *Run workflow* mit „Release … erstellen“ (Version aus `desktop/package.json`).
 - **Testversionen für Entwickler:** [Läufe des Workflows „Desktop“](https://github.com/Manitas0/PDF-Tool/actions/workflows/desktop.yml?query=event%3Apush+is%3Asuccess)
   (der Link zeigt nur erfolgreiche Läufe nach einem Push in dieses Repository, keine Pull Requests) → den
   neuesten Lauf öffnen → unter *Artifacts* **„PDF-Tool-Windows“** herunterladen (dafür muss man bei GitHub
