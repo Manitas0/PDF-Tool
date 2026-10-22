@@ -109,7 +109,8 @@ Dateinamen der Ergebnisse (Beispiel für `bericht.pdf`):
 
 ## Windows-Desktop-App
 
-PDF-Tool gibt es zusätzlich als Desktop-App für Windows 10 und 11 (64 Bit). Sie enthält dieselbe Oberfläche
+PDF-Tool gibt es zusätzlich als Desktop-App für Windows 10 und 11 (64 Bit), jeweils für PCs mit Intel- oder
+AMD-Prozessor (x64) und für Geräte mit ARM-Prozessor (arm64). Sie enthält dieselbe Oberfläche
 wie die Web-App, verpackt mit [Electron](https://www.electronjs.org/): eigenes Fenster mit Taskleisten-Symbol,
 Start ohne Browser, und die Ergebnisse speicherst du über den gewohnten Windows-Dialog „Speichern unter“.
 Auch die Desktop-App arbeitet vollständig lokal: Sie baut keine Netzwerkverbindungen auf, sucht nicht nach
@@ -126,10 +127,29 @@ Updates und sendet keine Daten.
   angemeldet sein) und das ZIP-Archiv entpacken. Artefakte werden nach 30 Tagen gelöscht; Artefakte namens
   „PDF-Tool-Windows-PR-…“ stammen aus Pull Requests und sind ungeprüft.
 
-| Datei | Variante |
-|---|---|
-| `PDF-Tool-Setup-<Version>.exe` | **Installationsprogramm:** installiert wahlweise nur für dich (ohne Administratorrechte) oder für alle Benutzer, Installationsordner wählbar, Verknüpfungen auf dem Desktop und im Startmenü |
-| `PDF-Tool-<Version>-portable.exe` | **Portable Version:** ohne Installation direkt starten, z. B. vom USB-Stick. Sie entpackt sich bei jedem Start erst: nach dem Doppelklick einige Sekunden warten, bis das Fenster erscheint, und **nicht mehrfach klicken**. Schneller startet die installierte Version. |
+Jede Variante gibt es zweimal, passend zum Prozessor – du brauchst nur **eine** der vier Dateien:
+
+| Variante | PCs mit Intel- oder AMD-Prozessor (die meisten) | Geräte mit ARM-Prozessor, z. B. Snapdragon |
+|---|---|---|
+| **Installationsprogramm:** installiert wahlweise nur für dich (ohne Administratorrechte) oder für alle Benutzer, Installationsordner wählbar, Verknüpfungen auf dem Desktop und im Startmenü | `PDF-Tool-Setup-<Version>-x64.exe` | `PDF-Tool-Setup-<Version>-arm64.exe` |
+| **Portable Version:** ohne Installation direkt starten, z. B. vom USB-Stick. Sie entpackt sich bei jedem Start erst: nach dem Doppelklick einige Sekunden warten, bis das Fenster erscheint, und **nicht mehrfach klicken**. Schneller startet die installierte Version. | `PDF-Tool-<Version>-portable-x64.exe` | `PDF-Tool-<Version>-portable-arm64.exe` |
+
+### x64 oder arm64?
+
+Welcher Prozessor in deinem PC steckt, zeigt Windows unter *Einstellungen → System → Info* bei **„Systemtyp“**:
+
+- „64-Bit-Betriebssystem, **x64-basierter Prozessor**“ → die Dateien mit **`x64`** im Namen (die meisten PCs
+  und Notebooks mit Intel- oder AMD-Prozessor).
+- „64-Bit-Betriebssystem, **ARM-basierter Prozessor**“ → die Dateien mit **`arm64`** im Namen (Geräte mit
+  ARM-Prozessor, z. B. Snapdragon). Unter Windows 10 auf ARM läuft nur diese Variante. Windows 11 auf ARM kann
+  zwar auch die x64-Variante emuliert ausführen, die arm64-Variante läuft aber ohne Emulation.
+
+Die arm64-Dateien laufen nicht auf PCs mit Intel- oder AMD-Prozessor. **32-Bit-Windows** (Systemtyp
+„32-Bit-Betriebssystem, …“) wird nicht unterstützt.
+
+Hinweis: Die arm64-Variante wird automatisch mitgebaut, und der Build prüft, dass sie ein Programm
+für ARM-Prozessoren enthält. Auf echter ARM-Hardware getestet ist sie aber nicht – die automatischen Tests
+starten nur die x64-Variante.
 
 ### Warnungen beim Herunterladen und Starten
 
@@ -166,7 +186,7 @@ Windows-Rechner mit Node.js 22:
 ```sh
 cd desktop
 npm install
-npm run dist:win    # ergibt desktop/dist/PDF-Tool-Setup-<Version>.exe und PDF-Tool-<Version>-portable.exe
+npm run dist:win    # ergibt in desktop/dist/ die vier .exe-Dateien (Installer und portabel, je x64 und arm64)
 ```
 
 Für die Entwicklung (auch unter Linux und macOS):
@@ -192,7 +212,9 @@ Technisch lädt die App die Seite nicht über `file://`, sondern über das eigen
 Netzwerkzugriffe (auch über WebRTC) und das Wegnavigieren von der App sind gesperrt, Webadressen für ein
 neues Fenster gehen an den Standardbrowser. Der Workflow „Desktop“ (`.github/workflows/desktop.yml`) testet
 die App bei jeder Änderung an `desktop/`, an der Web-App, an den gemeinsam genutzten Test-Hilfsfunktionen
-(`tests/e2e/helpers.mjs`) oder an den Abhängigkeiten im Hauptordner auf Windows und baut beide `.exe`-Dateien.
+(`tests/e2e/helpers.mjs`) oder an den Abhängigkeiten im Hauptordner auf Windows (x64) und baut die vier
+`.exe`-Dateien. Die arm64-Variante kann dort nicht gestartet werden; der Workflow prüft nur, dass alle vier Dateien
+entstanden sind und `PDF-Tool.exe` im arm64-Build ein ARM64-Programm ist.
 
 ## Seitenangaben – Syntax
 

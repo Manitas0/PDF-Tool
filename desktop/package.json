@@ -1,7 +1,7 @@
 {
   "name": "pdf-tool-desktop",
   "productName": "PDF-Tool",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "PDFs zusammenführen und teilen – als Desktop-App für Windows, komplett lokal und offline",
   "author": "PDF-Tool",
@@ -44,13 +44,15 @@
         {
           "target": "nsis",
           "arch": [
-            "x64"
+            "x64",
+            "arm64"
           ]
         },
         {
           "target": "portable",
           "arch": [
-            "x64"
+            "x64",
+            "arm64"
           ]
         }
       ],
@@ -67,10 +69,12 @@
         "de_DE"
       ],
       "language": "1031",
-      "artifactName": "PDF-Tool-Setup-${version}.${ext}"
+      "buildUniversalInstaller": false,
+      "artifactName": "PDF-Tool-Setup-${version}-${arch}.${ext}"
     },
     "portable": {
-      "artifactName": "PDF-Tool-${version}-portable.${ext}",
+      "buildUniversalInstaller": false,
+      "artifactName": "PDF-Tool-${version}-portable-${arch}.${ext}",
       "splashImage": "build/splash.bmp"
     }
   }

@@ -1,7 +1,8 @@
 name: Desktop
 
-# Builds the Windows desktop app (desktop/, Electron) and tests it on a real Windows machine.
-# On a tag v* the installer and the portable version are additionally published as a GitHub Release.
+# Builds the Windows desktop app (desktop/, Electron) for x64 and ARM64 and tests it on a real
+# Windows machine. On a tag v* the installers and the portable versions are additionally published
+# as a GitHub Release.
 
 on:
   push:
@@ -102,17 +103,47 @@ jobs:
         working-directory: desktop
         run: npm test
 
+      # Installer and portable version, each separately for x64 and ARM64 (see "build" in
+      # desktop/package.json).
       - name: Windows-Installer und portable Version bauen
         working-directory: desktop
         run: npm run dist:win
 
+      # The tests above can only start the x64 build (the runner is x64). At least make sure that
+      # all four files exist and that each build contains a program for its processor: the machine
+      # type in the PE header of PDF-Tool.exe is 8664 for x64 and aa64 for ARM64.
+      - name: Build-Ergebnis prüfen
+        working-directory: desktop/dist
+        shell: bash
+        run: |
+          version=$(node -p "require('../package.json').version")
+          for arch in x64 arm64; do
+            for file in "PDF-Tool-Setup-$version-$arch.exe" "PDF-Tool-$version-portable-$arch.exe"; do
+              [ -f "$file" ] || { echo "::error::$file wurde nicht gebaut"; exit 1; }
+            done
+          done
+          check_machine() {
+            local pe_offset machine
+            pe_offset=$(od -An -tu4 -j60 -N4 "$1" | tr -d ' ')
+            machine=$(od -An -tx2 -j$((pe_offset + 4)) -N2 "$1" | tr -d ' ')
+            [ "$machine" = "$2" ] || { echo "::error::$1 hat den Maschinentyp $machine statt $2"; exit 1; }
+            echo "$1: Maschinentyp $machine"
+          }
+          check_machine win-unpacked/PDF-Tool.exe 8664
+          check_machine win-arm64-unpacked/PDF-Tool.exe aa64
+
       # Builds of pull requests (possibly from forks) get a name of their own, so they cannot be
-      # mistaken for the builds of the repository's own branches.
+      # mistaken for the builds of the repository's own branches. The patterns name exactly the four
+      # .exe files checked above, so no other file from dist/ ends up in the artifact or the release.
       - name: Artefakt hochladen
         uses: actions/upload-artifact@v4
         with:
           name: ${{ github.event_name == 'pull_request' && format('PDF-Tool-Windows-PR-{0}', github.event.number) || 'PDF-Tool-Windows' }}
-          path: desktop/dist/*.exe
+          path: |
+            desktop/dist/PDF-Tool-Setup-*-x64.exe
+            desktop/dist/PDF-Tool-Setup-*-arm64.exe
+            desktop/dist/PDF-Tool-*-portable-x64.exe
+            desktop/dist/PDF-Tool-*-portable-arm64.exe
           if-no-files-found: error
           retention-days: 30
 
@@ -173,16 +204,29 @@ jobs:
           tag_name: ${{ steps.tag.outputs.name }}
           target_commitish: ${{ github.sha }}
           name: PDF-Tool ${{ steps.tag.outputs.name }}
-          files: release/*.exe
+          files: |
+            release/PDF-Tool-Setup-*-x64.exe
+            release/PDF-Tool-Setup-*-arm64.exe
+            release/PDF-Tool-*-portable-x64.exe
+            release/PDF-Tool-*-portable-arm64.exe
           fail_on_unmatched_files: true
           generate_release_notes: true
+          # GitHub shows every line break in a release body as one, so a paragraph stays on one line
+          # (wrap only where the text should break).
           body: |
             PDFs zusammenführen und teilen – komplett lokal, ohne Upload.
 
-            **Windows-App herunterladen** (unten unter *Assets*):
-            - `PDF-Tool-Setup-….exe` – Installer mit Startmenü- und Desktop-Verknüpfung
-            - `PDF-Tool-…-portable.exe` – läuft ohne Installation, z. B. vom USB-Stick
+            **Windows-App herunterladen** (unten unter *Assets*) – eine der vier Dateien genügt:
 
-            Die App ist nicht signiert. Beim ersten Start zeigt Windows deshalb „Der Computer wurde durch
-            Windows geschützt“: auf **„Weitere Informationen“** und dann **„Trotzdem ausführen“** klicken.
+            | | die meisten PCs (Intel/AMD) | Geräte mit ARM-Prozessor (z. B. Snapdragon) |
+            |---|---|---|
+            | **Installer** mit Startmenü- und Desktop-Verknüpfung | `PDF-Tool-Setup-…-x64.exe` | `PDF-Tool-Setup-…-arm64.exe` |
+            | **Portable Version**, läuft ohne Installation, z. B. vom USB-Stick | `PDF-Tool-…-portable-x64.exe` | `PDF-Tool-…-portable-arm64.exe` |
+
+            Welche Variante passt, steht unter *Einstellungen → System → Info* bei „Systemtyp“:
+            „x64-basierter Prozessor“ → **x64**, „ARM-basierter Prozessor“ → **arm64**.
+
+            Windows 10 auf ARM kann nur die arm64-Variante ausführen; 32-Bit-Windows wird nicht unterstützt. Die arm64-Variante wird automatisch mitgebaut, aber nicht auf ARM-Hardware getestet.
+
+            Die App ist nicht signiert. Beim ersten Start zeigt Windows deshalb „Der Computer wurde durch Windows geschützt“: auf **„Weitere Informationen“** und dann **„Trotzdem ausführen“** klicken.
             Details stehen in der README unter „Windows-Desktop-App“.
