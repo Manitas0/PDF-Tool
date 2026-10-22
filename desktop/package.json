@@ -1,0 +1,77 @@
+{
+  "name": "pdf-tool-desktop",
+  "productName": "PDF-Tool",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PDFs zusammenführen und teilen – als Desktop-App für Windows, komplett lokal und offline",
+  "author": "PDF-Tool",
+  "main": "main.js",
+  "scripts": {
+    "prepare-app": "node scripts/prepare-app.mjs",
+    "start": "npm run prepare-app && electron .",
+    "test": "npm run prepare-app && playwright test -c playwright.config.mjs",
+    "dist:win": "npm run prepare-app && electron-builder --win --publish never",
+    "dist:dir": "npm run prepare-app && electron-builder --dir"
+  },
+  "devDependencies": {
+    "electron": "44.7.0",
+    "electron-builder": "26.17.0"
+  },
+  "build": {
+    "appId": "io.github.manitas0.pdftool",
+    "productName": "PDF-Tool",
+    "copyright": "Copyright © 2026 PDF-Tool",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "app/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asar": true,
+    "publish": null,
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "onlyLoadAppFromAsar": true,
+      "grantFileProtocolExtraPrivileges": false
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "PDF-Tool",
+      "installerLanguages": [
+        "de_DE"
+      ],
+      "language": "1031",
+      "artifactName": "PDF-Tool-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "PDF-Tool-${version}-portable.${ext}",
+      "splashImage": "build/splash.bmp"
+    }
+  }
+}

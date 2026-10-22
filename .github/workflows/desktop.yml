@@ -1,0 +1,143 @@
+name: Desktop
+
+# Builds the Windows desktop app (desktop/, Electron) and tests it on a real Windows machine.
+# On a tag v* the installer and the portable version are additionally published as a GitHub Release.
+
+on:
+  push:
+    branches: ['**']
+    # Path filters do not apply to tag pushes: every v* tag builds and releases.
+    tags: ['v*']
+    paths:
+      - 'desktop/**'
+      - 'index.html'
+      - 'css/**'
+      - 'js/**'
+      - 'vendor/**'
+      # The desktop tests also use the web app's test helpers and the root dependencies
+      # (@playwright/test, pdf-lib, jszip).
+      - 'tests/e2e/helpers.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/desktop.yml'
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - 'index.html'
+      - 'css/**'
+      - 'js/**'
+      - 'vendor/**'
+      # The desktop tests also use the web app's test helpers and the root dependencies
+      # (@playwright/test, pdf-lib, jszip).
+      - 'tests/e2e/helpers.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/desktop.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The app is not code-signed: do not look for certificates on the runner.
+  CSC_IDENTITY_AUTO_DISCOVERY: false
+
+jobs:
+  windows:
+    name: Windows-App bauen und testen
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # File names, installer details and the „Über PDF-Tool“ dialog take the version from
+      # desktop/package.json – a tag v1.2.3 must not publish files named 1.0.0.
+      - name: Tag und Version prüfen
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          version=$(node -p "require('./desktop/package.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME passt nicht zur Version $version in desktop/package.json – erst die Version anpassen, dann taggen."
+            exit 1
+          fi
+
+      - name: Node.js einrichten
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+
+      # Root dependencies: @playwright/test, pdf-lib and jszip for the desktop tests.
+      - name: Abhängigkeiten der Web-App installieren
+        run: npm ci --omit=optional
+
+      - name: Abhängigkeiten der Desktop-App installieren
+        working-directory: desktop
+        run: npm ci
+
+      # Electron downloads its binary on first use; do it here so a failure shows up clearly.
+      - name: Electron herunterladen
+        working-directory: desktop
+        run: node -e "console.log(require('electron'))"
+
+      - name: End-to-End-Tests der Desktop-App
+        working-directory: desktop
+        run: npm test
+
+      - name: Windows-Installer und portable Version bauen
+        working-directory: desktop
+        run: npm run dist:win
+
+      # Builds of pull requests (possibly from forks) get a name of their own, so they cannot be
+      # mistaken for the builds of the repository's own branches.
+      - name: Artefakt hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event_name == 'pull_request' && format('PDF-Tool-Windows-PR-{0}', github.event.number) || 'PDF-Tool-Windows' }}
+          path: desktop/dist/*.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Testergebnisse hochladen
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-playwright-report
+          path: |
+            desktop/playwright-report/
+            desktop/test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  release:
+    name: GitHub Release erstellen
+    needs: windows
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Artefakt herunterladen
+        uses: actions/download-artifact@v4
+        with:
+          name: PDF-Tool-Windows
+          path: release
+
+      - name: Release veröffentlichen
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.exe
+          fail_on_unmatched_files: true
+          generate_release_notes: true

@@ -11,6 +11,7 @@ Es gibt keinen Server, keinen Upload und keinen Build-Schritt: Die Seite funktio
 - [Funktionen](#funktionen)
 - [Datenschutz](#datenschutz)
 - [Benutzung](#benutzung)
+- [Windows-Desktop-App](#windows-desktop-app)
 - [Seitenangaben – Syntax](#seitenangaben--syntax)
 - [Einschränkungen](#einschränkungen)
 - [Entwicklung](#entwicklung)
@@ -106,6 +107,92 @@ Dateinamen der Ergebnisse (Beispiel für `bericht.pdf`):
 | Auswahl der Seiten 2, 5, 6 und 9 | `bericht_Auszug_S2_5-6_9.pdf` |
 | ZIP-Archiv | `bericht_geteilt.zip` |
 
+## Windows-Desktop-App
+
+PDF-Tool gibt es zusätzlich als Desktop-App für Windows 10 und 11 (64 Bit). Sie enthält dieselbe Oberfläche
+wie die Web-App, verpackt mit [Electron](https://www.electronjs.org/): eigenes Fenster mit Taskleisten-Symbol,
+Start ohne Browser, und die Ergebnisse speicherst du über den gewohnten Windows-Dialog „Speichern unter“.
+Auch die Desktop-App arbeitet vollständig lokal: Sie baut keine Netzwerkverbindungen auf, sucht nicht nach
+Updates und sendet keine Daten.
+
+### Herunterladen
+
+- **Empfohlen – fertige Versionen:** im Repository unter **Releases** – sobald eine Version mit einem Git-Tag
+  `v…` (z. B. `v1.0.0`) veröffentlicht wurde.
+- **Testversionen für Entwickler:** [Läufe des Workflows „Desktop“](https://github.com/Manitas0/PDF-Tool/actions/workflows/desktop.yml?query=event%3Apush+is%3Asuccess)
+  (der Link zeigt nur erfolgreiche Läufe nach einem Push in dieses Repository, keine Pull Requests) → den
+  neuesten Lauf öffnen → unter *Artifacts* **„PDF-Tool-Windows“** herunterladen (dafür muss man bei GitHub
+  angemeldet sein) und das ZIP-Archiv entpacken. Artefakte werden nach 30 Tagen gelöscht; Artefakte namens
+  „PDF-Tool-Windows-PR-…“ stammen aus Pull Requests und sind ungeprüft.
+
+| Datei | Variante |
+|---|---|
+| `PDF-Tool-Setup-<Version>.exe` | **Installationsprogramm:** installiert wahlweise nur für dich (ohne Administratorrechte) oder für alle Benutzer, Installationsordner wählbar, Verknüpfungen auf dem Desktop und im Startmenü |
+| `PDF-Tool-<Version>-portable.exe` | **Portable Version:** ohne Installation direkt starten, z. B. vom USB-Stick. Sie entpackt sich bei jedem Start erst: nach dem Doppelklick einige Sekunden warten, bis das Fenster erscheint, und **nicht mehrfach klicken**. Schneller startet die installierte Version. |
+
+### Warnungen beim Herunterladen und Starten
+
+Die App ist nicht digital signiert – ein Code-Signing-Zertifikat kostet jedes Jahr Geld. Windows und die
+Browser warnen deshalb vor ihr wie vor jedem selten heruntergeladenen Programm ohne bekannten Herausgeber:
+
+1. **Beim Herunterladen** meldet Edge „… wird nicht häufig heruntergeladen“ und behält die Datei zunächst
+   nicht. Klicke in der Download-Liste bei der Datei auf **„…“** → **„Beibehalten“** → **„Mehr anzeigen“** →
+   **„Trotzdem beibehalten“**. Chrome zeigt eine ähnliche Warnung; dort **„Beibehalten“** wählen.
+2. **Beim Ausführen der heruntergeladenen `.exe`** meldet Windows SmartScreen „Der Computer wurde durch
+   Windows geschützt“. Klicke auf **„Weitere Informationen“** und dann auf **„Trotzdem ausführen“**.
+
+Ist unter Windows 11 die **„Intelligente App-Steuerung“** eingeschaltet (*Windows-Sicherheit → App- &
+Browsersteuerung*), blockiert Windows unsignierte Programme vollständig, ohne Möglichkeit, sie trotzdem
+auszuführen. Verwende in diesem Fall die Web-Version. Lade die Dateien nur unter **Releases** bzw. aus den
+oben verlinkten Läufen dieses Repositorys herunter.
+
+### Deinstallieren
+
+- **Installierte Version:** *Einstellungen → Apps → Installierte Apps → PDF-Tool → Deinstallieren*
+  (oder *Systemsteuerung → Programme und Features*).
+- **Portable Version:** einfach die `.exe`-Datei löschen.
+
+Zurück bleibt höchstens der Ordner `%APPDATA%\PDF-Tool` mit Zwischenspeicher-Dateien von Electron (keine
+Dokumente); er kann gefahrlos gelöscht werden.
+
+### Selbst bauen und entwickeln
+
+Der Unterordner `desktop/` ist ein eigenständiges Node-Projekt. Die Web-App bleibt die einzige Quelle:
+`npm run prepare-app` kopiert `index.html`, `css/`, `js/` und `vendor/` nach `desktop/app/` (wird bei `start`,
+`test` und den Build-Befehlen automatisch ausgeführt). Die Installationsdateien entstehen auf einem
+Windows-Rechner mit Node.js 22:
+
+```sh
+cd desktop
+npm install
+npm run dist:win    # ergibt desktop/dist/PDF-Tool-Setup-<Version>.exe und PDF-Tool-<Version>-portable.exe
+```
+
+Für die Entwicklung (auch unter Linux und macOS):
+
+```sh
+cd desktop
+npm install
+npm start           # startet die App in Electron
+npm test            # End-to-End-Tests der App; braucht vorher `npm install --omit=optional` im Hauptordner
+npm run dist:dir    # schneller Paketierungstest für das aktuelle Betriebssystem (desktop/dist/)
+```
+
+`npm start` verwendet ein eigenes Profil (`%APPDATA%\PDF-Tool-Dev`, unter Linux `~/.config/PDF-Tool-Dev`),
+die Tests je App-Start einen frischen temporären Ordner. So kommen sich Entwicklung, Tests und eine
+installierte PDF-Tool-Version nicht in die Quere.
+
+**Neue Version veröffentlichen:** zuerst in `desktop/package.json` die Version setzen (z. B.
+`"version": "1.1.0"`) und committen, dann den passenden Tag pushen (`v1.1.0`). Die Version landet in den
+Dateinamen und im Dialog „Über PDF-Tool“; passen Tag und Version nicht zusammen, bricht der Workflow ab.
+
+Technisch lädt die App die Seite nicht über `file://`, sondern über das eigene Schema `app://pdf-tool/`
+(aus `app.asar`). Die Seite läuft in einer Sandbox ohne Node.js-Zugriff; Berechtigungsanfragen,
+Netzwerkzugriffe (auch über WebRTC) und das Wegnavigieren von der App sind gesperrt, Webadressen für ein
+neues Fenster gehen an den Standardbrowser. Der Workflow „Desktop“ (`.github/workflows/desktop.yml`) testet
+die App bei jeder Änderung an `desktop/`, an der Web-App, an den gemeinsam genutzten Test-Hilfsfunktionen
+(`tests/e2e/helpers.mjs`) oder an den Abhängigkeiten im Hauptordner auf Windows und baut beide `.exe`-Dateien.
+
 ## Seitenangaben – Syntax
 
 Seitenzahlen beginnen bei 1. Mehrere Angaben werden durch Komma oder Semikolon getrennt,
@@ -180,6 +267,7 @@ npm run serve                 # lokaler Server auf http://127.0.0.1:8080/
 | `.nojekyll` | sorgt dafür, dass GitHub Pages alle Dateien unverändert ausliefert (ohne Jekyll-Verarbeitung) |
 | `tests/unit/` | Unit-Tests für `js/pdf-core.js` |
 | `tests/e2e/` | Playwright-Tests der kompletten Oberfläche und des Servers |
+| `desktop/` | Windows-Desktop-App (Electron): `main.js`, Build-Konfiguration in `package.json`, Tests in `desktop/tests/` – siehe [Windows-Desktop-App](#windows-desktop-app) |
 
 ### Hinweise
 

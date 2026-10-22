@@ -2,3 +2,10 @@ node_modules/
 test-results/
 playwright-report/
 .DS_Store
+
+# Desktop app (desktop/): dependencies, generated copy of the web app, build output, test output
+desktop/node_modules/
+desktop/app/
+desktop/dist/
+desktop/test-results/
+desktop/playwright-report/
