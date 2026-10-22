@@ -6,6 +6,7 @@ import {
   addMergeFiles,
   captureDownload,
   createPdf,
+  createSlowPdf,
   expectIdle,
   loadSplitFile,
   mergeItems,
@@ -14,6 +15,7 @@ import {
 } from './helpers.mjs';
 
 const announcer = (page) => page.locator('#sr-announcer');
+const RANGE_ERROR = 'Seite 9 gibt es nicht – das Dokument hat nur 3 Seiten.';
 
 /** Records every text that #sr-announcer shows from now on. */
 async function recordAnnouncements(page) {
@@ -60,6 +62,38 @@ test.describe('der Fokus geht nach einer Aktion nicht verloren', () => {
     await captureDownload(page, () => page.keyboard.press('Enter'));
     await expect(page.locator('#split-zip-download')).toBeFocused();
   });
+
+  test('wer während des Ladens woanders hinklickt, wird nicht zurückgeholt (kein Sprung nach oben)', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 600 });
+    const small = await createPdf(2);
+    await addMergeFiles(page, Array.from({ length: 6 }, (_, i) => pdfFile(`${i + 1}.pdf`, small)));
+    await expect(mergeItems(page)).toHaveCount(6);
+    await expectIdle(page);
+
+    // Notes whether the app was still busy at the click – otherwise this test would prove nothing.
+    await page.evaluate(() => {
+      window.__busyAtClick = null;
+      const busy = document.getElementById('busy');
+      document.addEventListener('pointerdown', () => (window.__busyAtClick = !busy.hidden), { capture: true, once: true });
+    });
+    // Focus stays on the file input after choosing files (as after picking them via the dropzone).
+    const input = page.locator('#merge-input');
+    await input.focus();
+    const large = pdfFile('gross.pdf', await createSlowPdf());
+    await input.setInputFiles([large, large]); // two large files keep the app busy for a while
+    await expect(page.locator('#busy')).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await page.locator('.site-footer p').first().click(); // plain text: focus moves to <body>
+    const scrollY = await page.evaluate(() => window.scrollY);
+    expect(scrollY).toBeGreaterThan(0);
+
+    await expect(mergeItems(page)).toHaveCount(8, { timeout: 30_000 });
+    await expectIdle(page);
+    expect(await page.evaluate(() => window.__busyAtClick), 'Klick während des Ladens').toBe(true);
+    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+    // Added items may push the content down (scroll anchoring), but the page must not jump up to the input.
+    expect(await page.evaluate(() => window.scrollY)).toBeGreaterThanOrEqual(scrollY);
+  });
 });
 
 test.describe('Ansagen für Screenreader', () => {
@@ -72,13 +106,29 @@ test.describe('Ansagen für Screenreader', () => {
     const announcements = await recordAnnouncements(page);
     const range = mergeItems(page).first().locator('.merge-item-range');
     await range.pressSequentially('1-9', { delay: 30 });
-    const message = 'Seite 9 gibt es nicht – das Dokument hat nur 3 Seiten.';
+    // The announcement names the file, the inline error next to the field does not need to.
+    await expect(mergeItems(page).first().locator('.merge-item-error')).toHaveText(RANGE_ERROR);
+    const message = `Datei 1: ${RANGE_ERROR}`;
     await expect(announcer(page)).toHaveText(message);
     expect(await announcements()).toEqual([message]);
 
     // Correcting the input clears the region without a new announcement.
     await range.fill('1-2');
     await expect(announcer(page)).toHaveText('');
+  });
+
+  test('derselbe Fehler im Feld einer zweiten Datei wird ebenfalls angesagt', async ({ page }) => {
+    const bytes = await createPdf(3);
+    await addMergeFiles(page, [pdfFile('a.pdf', bytes), pdfFile('a.pdf', bytes)]);
+    await expect(mergeItems(page)).toHaveCount(2);
+    await expectIdle(page);
+
+    const announcements = await recordAnnouncements(page);
+    await mergeItems(page).nth(0).locator('.merge-item-range').pressSequentially('1-9', { delay: 30 });
+    await expect(announcer(page)).toHaveText(`Datei 1: ${RANGE_ERROR}`);
+    await mergeItems(page).nth(1).locator('.merge-item-range').pressSequentially('1-9', { delay: 30 });
+    await expect(announcer(page)).toHaveText(`Datei 2: ${RANGE_ERROR}`);
+    expect(await announcements()).toEqual([`Datei 1: ${RANGE_ERROR}`, `Datei 2: ${RANGE_ERROR}`]);
   });
 
   test('die Vorschau beim Teilen wird erst nach dem Tippen angesagt', async ({ page }) => {

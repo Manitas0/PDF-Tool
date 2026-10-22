@@ -1054,7 +1054,9 @@ main:focus {
 }
 
 .merge-item-error {
-  grid-column: 4 / -1;
+  grid-column: 3 / -1;
+  /* A long message must wrap, not widen the columns (that would move the field being typed in). */
+  contain: inline-size;
   margin-top: -4px;
   color: var(--danger);
   font-size: 0.82rem;
@@ -1079,6 +1081,13 @@ main:focus {
 
   .merge-item-grip {
     display: none;
+  }
+
+  /* Names often differ only at the end („…_2019.pdf“, „… Seite 2.pdf“) and touch devices show no
+     title tooltip: wrap instead of cutting them off. */
+  .merge-item-name {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .merge-item-error {

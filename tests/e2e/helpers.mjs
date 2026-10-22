@@ -139,6 +139,27 @@ export async function readZip(bytes) {
   return { names: [...files.keys()].sort(), files };
 }
 
+/**
+ * Compression method of every entry of a ZIP archive, read from its central directory
+ * (0 = stored, 8 = deflated).
+ * @returns {number[]}
+ */
+export function zipCompressionMethods(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  // End of central directory record (no archive comment): 22 bytes at the very end.
+  const end = bytes.byteLength - 22;
+  expect(view.getUint32(end, true), 'Ende des zentralen Verzeichnisses').toBe(0x06054b50);
+  const count = view.getUint16(end + 10, true);
+  let offset = view.getUint32(end + 16, true);
+  const methods = [];
+  for (let i = 0; i < count; i += 1) {
+    expect(view.getUint32(offset, true), 'Eintrag im zentralen Verzeichnis').toBe(0x02014b50);
+    methods.push(view.getUint16(offset + 10, true));
+    offset += 46 + view.getUint16(offset + 28, true) + view.getUint16(offset + 30, true) + view.getUint16(offset + 32, true);
+  }
+  return methods;
+}
+
 /** Expands a 1-based page list like "2, 5-6, 9" into [2, 5, 6, 9] (ascending ranges only). */
 export function expandPageList(text) {
   return text

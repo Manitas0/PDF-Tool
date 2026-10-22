@@ -137,7 +137,11 @@ Wie die Angaben verwendet werden, hängt von der Stelle ab:
 - **Verschlüsselte bzw. passwortgeschützte PDFs werden nicht unterstützt.** Entferne den Schutz vorher
   mit einem anderen Programm.
 - **Lesezeichen (Outlines) und Formularfunktionen (AcroForm)** werden nicht übernommen: Ausgefüllte
-  Formularfelder bleiben sichtbar, lassen sich in der Ergebnis-PDF aber nicht mehr bearbeiten.
+  Formularfelder bleiben sichtbar, lassen sich in der Ergebnis-PDF aber nicht mehr bearbeiten. Bei
+  Formularen, deren Werte erst das Anzeigeprogramm zeichnet (z. B. aus LibreOffice), schreibt PDF-Tool
+  die Werte von Text- und Auswahlfeldern in der Standardschrift Helvetica auf die Seite; Werte mit
+  Zeichen außerhalb des westeuropäischen Zeichensatzes (z. B. Griechisch, Kyrillisch, „ł“ oder „č“)
+  können dort fehlen.
 - **Interne Links** bleiben erhalten, wenn sie direkt auf eine Seite zeigen, die ebenfalls in der
   Ergebnis-PDF liegt. Links auf nicht übernommene Seiten werden entfernt; Links über benannte Sprungziele
   (wie sie z. B. LaTeX erzeugt) funktionieren nicht mehr. Der sichtbare Seiteninhalt bleibt erhalten.

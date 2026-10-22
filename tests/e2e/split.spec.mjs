@@ -15,6 +15,7 @@ import {
   selectSplitMode,
   splitThumbs,
   textFile,
+  zipCompressionMethods,
 } from './helpers.mjs';
 
 // bericht.pdf: 10 pages, page n has width 499 + n (500 … 509 pt)
@@ -94,7 +95,10 @@ test('Seitenbereiche (auch absteigend) als ZIP-Archiv', async ({ page }) => {
 
   const download = await captureDownload(page, () => runButton(page).click());
   expect(download.suggestedFilename()).toBe('bericht_geteilt.zip');
-  const zip = await readZip(await downloadBytes(download));
+  const zipBytes = await downloadBytes(download);
+  // The PDFs are compressed already: the archive stores them (deflating would only cost time).
+  expect(zipCompressionMethods(zipBytes)).toEqual([0, 0, 0]);
+  const zip = await readZip(zipBytes);
   expect(zip.names).toEqual(['bericht_S1-3.pdf', 'bericht_S5-3.pdf', 'bericht_S7-10.pdf']);
   expect(await readPageWidths(zip.files.get('bericht_S1-3.pdf'))).toEqual(widths(1, 2, 3));
   expect(await readPageWidths(zip.files.get('bericht_S7-10.pdf'))).toEqual(widths(7, 8, 9, 10));
@@ -372,4 +376,57 @@ test('alte Ergebnisse verschwinden, sobald sich die Einstellungen ändern', asyn
   await expectResults();
   await page.locator('#split-select-all').click();
   await expectNoResults();
+});
+
+test('wird während des Teilens die Eingabe geändert, gibt es kein veraltetes Ergebnis', async ({ page }) => {
+  await page.locator('#split-reset').click();
+  await loadSplitFile(page, pdfFile('gross.pdf', await createSlowPdf()));
+  const downloads = [];
+  page.on('download', (download) => downloads.push(download.suggestedFilename()));
+
+  await page.locator('#split-ranges').fill('1-1500, 1501-3000');
+  await runButton(page).click();
+  await expect(page.locator('#busy')).toBeVisible();
+  // The settings stay editable while splitting.
+  await page.locator('#split-ranges').fill('1-10');
+  await expectIdle(page);
+
+  await expect(page.locator('#status')).toHaveText('Die Einstellungen wurden während des Teilens geändert – bitte starte es erneut.');
+  await expect(page.locator('#split-results')).toBeHidden();
+  await expect(resultLinks(page)).toHaveCount(0);
+  await expect(preview(page)).toHaveText('Ergibt 1 Datei: 1-10');
+  // Give a (wrongly) triggered download a moment to show up.
+  await page.waitForTimeout(300);
+  expect(downloads, 'Ergebnisse der alten Einstellungen dürfen nicht heruntergeladen werden').toEqual([]);
+
+  const download = await captureDownload(page, () => runButton(page).click());
+  expect(download.suggestedFilename()).toBe('gross_S1-10.pdf');
+  expect(await readPageWidths(await downloadBytes(download))).toEqual(Array.from({ length: 10 }, (_, i) => 900 + i));
+});
+
+test('der Hinweis zur Seitenvorschau nennt Dateinummern erst, wenn sie zu sehen sind', async ({ page }) => {
+  const hint = page.locator('#split-pages-hint');
+  const pending = 'Sobald die Aufteilung gültig ist, zeigt eine farbige Zahl an jeder Seite, in welcher Datei sie landet.';
+  const shown = 'Die Zahl an jeder Seite zeigt, in welcher Datei sie landet.';
+  const badges = () => splitThumbs(page).evaluateAll((thumbs) => thumbs.map((t) => t.querySelector('.page-thumb-badge').textContent));
+
+  // Mode "ranges" with an empty field: no page carries a file number yet.
+  await expect(hint).toHaveText(pending);
+  expect((await badges()).filter(Boolean)).toEqual([]);
+
+  await page.locator('#split-ranges').fill('1-3');
+  await expect(hint).toHaveText(shown);
+  await page.locator('#split-ranges').fill('abc');
+  await expect(hint).toHaveText(pending);
+  expect((await badges()).filter(Boolean)).toEqual([]);
+
+  await selectSplitMode(page, 'chunk');
+  await expect(hint).toHaveText(shown);
+  await page.locator('#split-chunk-size').fill('');
+  await expect(hint).toHaveText(pending);
+
+  await selectSplitMode(page, 'single');
+  await expect(hint).toHaveText(shown);
+  await selectSplitMode(page, 'extract');
+  await expect(hint).toHaveText('Klicke auf Seiten, um sie auszuwählen (Umschalt-Klick wählt einen Bereich).');
 });

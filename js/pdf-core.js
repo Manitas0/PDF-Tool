@@ -479,8 +479,11 @@
    * thumbnails:
    *   - page dictionaries without /Type /Page (and tree nodes without /Type /Pages) get their
    *     type; pdf-lib would silently skip them, while pdf.js, PDFium and poppler show them;
-   *   - an object that occurs twice in the tree (a cycle, or shared /Kids with which a few KB
-   *     declare millions of pages) is rejected, as pdf.js does.
+   *   - a tree node that occurs twice (a cycle, or shared /Kids with which a few KB declare
+   *     millions of pages) is rejected, as pdf.js does;
+   *   - a page that is listed twice is shown twice, as pdf.js and poppler do (pdf-lib
+   *     `addPage(getPage(0))`, pypdf `insert_page`). This cannot multiply the page count, which
+   *     stays bounded by the length of all /Kids arrays.
    * Throws a plain Error for a broken tree; loadPdf turns it into INVALID_PDF.
    */
   function normalizePageTree(lib, doc) {
@@ -492,8 +495,11 @@
     const pending = [{ value: doc.catalog.get(pagesKey), isRoot: true, replace: (node) => doc.catalog.set(pagesKey, node) }];
     while (pending.length > 0) {
       const { value, isRoot, replace } = pending.pop();
-      if (seen.has(value)) throw new Error('Invalid page tree: an object occurs more than once.');
       let node = value instanceof PDFRef ? context.lookup(value) : value;
+      if (seen.has(value)) {
+        if (node instanceof PDFPageLeaf) continue;
+        throw new Error('Invalid page tree: an object occurs more than once.');
+      }
       if (!(node instanceof PDFDict)) continue;
 
       if (Object.getPrototypeOf(node) === PDFDict.prototype) {
@@ -654,10 +660,59 @@
     }
   }
 
+  /**
+   * Draws the values of text and choice fields into the appearances of their widgets if the
+   * form asks the viewer to do so (/NeedAppearances, e.g. LibreOffice, pdflatex and pypdf: the
+   * value is only in /V, the appearance is empty). Viewers do this only for a form, and the
+   * outputs have none. Runs after detachWidgets(), so every widget is a field of its own and a
+   * cycle or shared node in the field tree cannot make this endless or exponential. A widget
+   * whose appearance cannot be generated (e.g. a value that Helvetica cannot show) keeps it, and
+   * so does a password field (pdf-lib would draw the password in clear).
+   * Modifies `doc`, which must be a private parse of the file.
+   */
+  async function drawFieldValues(lib, doc) {
+    const { PDFAcroComboBox, PDFAcroListBox, PDFAcroText, PDFArray, PDFBool, PDFDict, PDFName, PDFRef } = lib;
+    const acroForm = lookupAs(doc.catalog, PDFName.of('AcroForm'), PDFDict);
+    if (!acroForm || acroForm.lookup(PDFName.of('NeedAppearances')) !== PDFBool.True) return;
+    // pdf-lib's form API removes XFA data with a console warning; the outputs have no form anyway.
+    acroForm.delete(PDFName.of('XFA'));
+
+    const done = new Set();
+    let font;
+    for (const page of doc.getPages()) {
+      const annots = lookupAs(page.node, PDFName.of('Annots'), PDFArray);
+      if (!annots) continue;
+      for (let i = 0; i < annots.size(); i++) {
+        const ref = annots.get(i);
+        const widget = annots.lookup(i);
+        if (!(ref instanceof PDFRef) || done.has(ref) || !(widget instanceof PDFDict)) continue;
+        if (widget.lookup(PDFName.of('Subtype')) !== PDFName.of('Widget')) continue;
+        done.add(ref);
+        try {
+          const acroField = lib.createPDFAcroField(widget, ref);
+          let field;
+          if (acroField instanceof PDFAcroText) {
+            field = lib.PDFTextField.of(acroField, ref, doc);
+            // Viewers never show a password in clear (pdf.js keeps the appearance as it is).
+            if (field.isPassword()) continue;
+          } else if (acroField instanceof PDFAcroComboBox) field = lib.PDFDropdown.of(acroField, ref, doc);
+          else if (acroField instanceof PDFAcroListBox) field = lib.PDFOptionList.of(acroField, ref, doc);
+          else continue; // check boxes and radio buttons have an appearance for each state
+          font = font || doc.embedStandardFont(lib.StandardFonts.Helvetica);
+          field.updateAppearances(font);
+        } catch (err) {
+          // keep the original appearance
+        }
+      }
+    }
+    if (font) await font.embed();
+  }
+
   /** Loads a PDF whose pages are going to be copied (a private parse that may be modified). */
   async function loadSourcePdf(lib, bytes, fileName) {
     const doc = await loadPdf(bytes, { fileName });
     detachWidgets(lib, doc);
+    await drawFieldValues(lib, doc);
     return doc;
   }
 

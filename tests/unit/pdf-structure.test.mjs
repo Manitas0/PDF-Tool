@@ -2,7 +2,9 @@
 //   - outputs must not contain anything of pages that were not selected (links, form fields,
 //     shared or inherited resources would otherwise pull them in, invisible but readable),
 //   - hidden layers (optional content) must stay hidden,
-//   - the page tree is read like pdf.js reads it (untyped pages count, cycles/DAGs are rejected).
+//   - filled form fields stay visible although the outputs have no form,
+//   - the page tree is read like pdf.js reads it (untyped pages count, pages listed twice are
+//     shown twice, cycles/DAGs are rejected).
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
@@ -13,6 +15,7 @@ const {
   PDFArray,
   PDFDict,
   PDFDocument,
+  PDFHexString,
   PDFName,
   PDFRawStream,
   PDFRef,
@@ -154,6 +157,60 @@ async function makeFormPdf() {
   doc.catalog.set(name('AcroForm'), context.obj({ Fields: [parentRef] }));
   return doc.save();
 }
+
+const EMPTY_APPEARANCE = '/Tx BMC\nEMC\n';
+
+/**
+ * A filled form as LibreOffice writes it: the values are only in /V, the appearances are empty
+ * and /NeedAppearances asks the viewer to draw the values. Text field „vorname“ (Erika), combo
+ * box „land“ whose type and value sit on its parent field (Österreich), text field „ort“
+ * with a value that Helvetica cannot show (Αθήνα) and password field „pin“ (geheim123), whose
+ * value viewers never show.
+ */
+async function makeNeedAppearancesPdf({ needAppearances = true } = {}) {
+  const doc = await PDFDocument.create();
+  const context = doc.context;
+  const page = doc.addPage([200, 200]);
+  const widget = (y, entries) => context.register(context.obj({
+    Type: 'Annot',
+    Subtype: 'Widget',
+    Rect: [10, y, 190, y + 20],
+    F: 4,
+    P: page.ref,
+    AP: { N: context.register(context.stream(EMPTY_APPEARANCE, { Type: 'XObject', Subtype: 'Form', BBox: [0, 0, 180, 20] })) },
+    ...entries,
+  }));
+  const da = PDFString.of('0 0 0 rg /He 10 Tf');
+  const vorname = widget(10, { FT: 'Tx', T: PDFString.of('vorname'), V: PDFHexString.fromText('Erika'), DA: da });
+  const landRef = context.nextRef();
+  const land = widget(40, { Parent: landRef });
+  context.assign(landRef, context.obj({
+    FT: 'Ch',
+    Ff: 1 << 17, // combo box
+    T: PDFString.of('land'),
+    V: PDFHexString.fromText('Österreich'),
+    Opt: [PDFHexString.fromText('Deutschland'), PDFHexString.fromText('Österreich')],
+    DA: da,
+    Kids: [land],
+  }));
+  const ort = widget(70, { FT: 'Tx', T: PDFString.of('ort'), V: PDFHexString.fromText('Αθήνα'), DA: da });
+  const pin = widget(100, { FT: 'Tx', Ff: 1 << 13, T: PDFString.of('pin'), V: PDFHexString.fromText('geheim123'), DA: da });
+  page.node.set(name('Annots'), context.obj([vorname, land, ort, pin]));
+  doc.catalog.set(name('AcroForm'), context.obj({ Fields: [vorname, landRef, ort, pin], NeedAppearances: needAppearances }));
+  return doc.save();
+}
+
+/** The decoded normal appearance of every widget on the first page of an output. */
+async function widgetAppearances(bytes) {
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false });
+  return annotsOf(doc.getPage(0)).map((widget) => {
+    const stream = widget.lookup(name('AP'), PDFDict).lookup(name('N'));
+    return Buffer.from(decodePDFRawStream(stream).decode()).toString('latin1');
+  });
+}
+
+/** The operator that shows `text` (WinAnsi, which is Latin-1 for these letters) in Helvetica. */
+const showText = (text) => `<${Buffer.from(text, 'latin1').toString('hex').toUpperCase()}> Tj`;
 
 /**
  * 3 pages that use one resource dictionary with the images Scan1-3, a form XObject „Frame“
@@ -504,7 +561,7 @@ describe('page tree', () => {
     await expectToolError(splitPdf(makeDagPdf(19), [[0]]), 'INVALID_PDF');
   });
 
-  test('INVALID_PDF for cycles and pages listed twice', async () => {
+  test('INVALID_PDF for a cycle in the page tree', async () => {
     const cycle = buildPdf([
       CATALOG,
       '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
@@ -512,8 +569,65 @@ describe('page tree', () => {
       leaf(3, 100),
     ]);
     await expectToolError(loadPdf(cycle), 'INVALID_PDF');
+  });
 
-    const twice = buildPdf([CATALOG, '<< /Type /Pages /Kids [3 0 R 3 0 R] /Count 2 >>', leaf(2, 100)]);
-    await expectToolError(loadPdf(twice), 'INVALID_PDF');
+  test('a page listed twice is shown twice, as pdf.js and poppler show it', async () => {
+    const twice = buildPdf([CATALOG, '<< /Type /Pages /Kids [3 0 R 4 0 R 3 0 R] /Count 3 >>', leaf(2, 100), leaf(2, 101)]);
+    assert.equal(await getPageCount(twice), 3);
+    const parts = await splitPdf(twice, singlePageGroups(3));
+    assert.deepEqual(await Promise.all(parts.map(pageWidths)), [[100], [101], [100]]);
+    const merged = await mergePdfs([{ bytes: twice }]);
+    assert.deepEqual(await pageWidths(merged), [100, 101, 100]);
+    assert.equal((await inspect(merged)).pageObjects, 3);
+
+    // pdf-lib writes such a page tree for doc.addPage(doc.getPage(0)).
+    const doc = await PDFDocument.create();
+    doc.addPage([100, 200]);
+    doc.addPage(doc.getPage(0));
+    assert.equal(await getPageCount(await doc.save()), 2);
+  });
+});
+
+describe('filled form fields', () => {
+  test('values that only the viewer draws (/NeedAppearances) stay visible without the form', async () => {
+    const [output] = await splitPdf(await makeNeedAppearancesPdf(), [[0]]);
+    const { doc } = await inspect(output);
+    assert.equal(doc.catalog.get(name('AcroForm')), undefined);
+    const [vorname, land, ort, pin] = await widgetAppearances(output);
+    assert.ok(vorname.includes(showText('Erika')), vorname);
+    assert.ok(land.includes(showText('Österreich')), land);
+    // Helvetica has no Greek letters: the original appearance is kept.
+    assert.equal(ort, EMPTY_APPEARANCE);
+    // A password is never drawn in clear (pdf.js and poppler do not show it either).
+    assert.equal(pin, EMPTY_APPEARANCE);
+  });
+
+  test('a field tree that names a node twice (a few bytes, 2^40 fields) does not hang', async () => {
+    const doc = await PDFDocument.create();
+    const context = doc.context;
+    const page = doc.addPage([200, 200]);
+    const fields = Array.from({ length: 40 }, () => context.nextRef());
+    const widget = context.register(context.obj({
+      Type: 'Annot', Subtype: 'Widget', Rect: [10, 10, 190, 30], P: page.ref, Parent: fields[39],
+      AP: { N: context.register(context.stream(EMPTY_APPEARANCE, { Type: 'XObject', Subtype: 'Form', BBox: [0, 0, 180, 20] })) },
+    }));
+    fields.forEach((ref, i) => context.assign(ref, context.obj({
+      T: PDFString.of(`n${i}`),
+      FT: 'Tx',
+      V: PDFString.of('Erika'),
+      Parent: i > 0 ? fields[i - 1] : null,
+      Kids: i < 39 ? [fields[i + 1], fields[i + 1]] : [widget],
+    })));
+    page.node.set(name('Annots'), context.obj([widget]));
+    doc.catalog.set(name('AcroForm'), context.obj({ Fields: [fields[0]], NeedAppearances: true }));
+
+    const [output] = await splitPdf(await doc.save(), [[0]]);
+    const [appearance] = await widgetAppearances(output);
+    assert.ok(appearance.includes(showText('Erika')), appearance);
+  });
+
+  test('appearances stay as they are without /NeedAppearances', async () => {
+    const output = await extractPages(await makeNeedAppearancesPdf({ needAppearances: false }), [0]);
+    assert.deepEqual(await widgetAppearances(output), [EMPTY_APPEARANCE, EMPTY_APPEARANCE, EMPTY_APPEARANCE, EMPTY_APPEARANCE]);
   });
 });

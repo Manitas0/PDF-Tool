@@ -200,6 +200,7 @@
     items: [], // { id, name, size, bytes, pageCount, range, pages, error }
     nodes: new Map(), // id -> element references of the list item
     nextId: 1,
+    changes: 0, // increments whenever the list or a page selection changes (see clearMergeResult)
     resultUrl: null,
     dragId: null,
     dropTarget: null, // { index, before } while dragging
@@ -217,6 +218,7 @@
     extractPages: [], // last valid selection in extract mode (0-based, output order)
     lastClicked: null,
     plan: null,
+    changes: 0, // increments whenever the file or the split settings change (see clearSplitResults)
     resultUrls: [],
   };
 
@@ -224,6 +226,10 @@
   let previewEnabled = false;
   let announceTimer = 0;
   let mergeAddChain = Promise.resolve();
+  let mergeAddPending = 0; // batches queued or loading in mergeAddChain
+  // What all batches since the chain was last idle added / could not add: each batch reports the
+  // whole outcome, so a later batch's status does not hide an earlier batch's errors.
+  let mergeAddReport = { added: 0, errors: [] };
   const mergeThumbQueue = createTaskQueue(1);
   const splitThumbQueue = createTaskQueue(2);
 
@@ -273,21 +279,29 @@
     return !active || active === document.body || active.disabled === true || active.getClientRects().length === 0;
   }
 
-  /** If focus is lost, moves it to the first of `candidates` that can take it. */
+  /** If focus is lost, moves it (without scrolling) to the first of `candidates` that can take it. */
   function restoreFocus(candidates) {
     for (const element of candidates) {
       if (!focusIsLost()) return;
-      if (element && element !== document.body && element.isConnected && !element.disabled) element.focus();
+      if (element && element !== document.body && element.isConnected && !element.disabled) {
+        element.focus({ preventScroll: true });
+      }
     }
   }
 
   /**
    * Runs `task` while showing the busy indicator and disabling the action buttons. Disabling (or
    * hiding) the focused control drops focus to <body>; afterwards it returns to that control or,
-   * if the control cannot take focus any more, to `focusFallback`.
+   * if the control cannot take focus any more, to `focusFallback` – unless the user clicked or
+   * tapped somewhere meanwhile (focus on <body> is then where they put it).
    */
   async function withBusy(message, task, focusFallback = null) {
     const focused = document.activeElement;
+    let interacted = false;
+    const onPointerDown = () => {
+      interacted = true;
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
     busyCount += 1;
     setBusyMessage(message);
     els.busy.hidden = false;
@@ -297,10 +311,11 @@
       await yieldToBrowser();
       return await task();
     } finally {
+      document.removeEventListener('pointerdown', onPointerDown, true);
       busyCount -= 1;
       if (busyCount === 0) els.busy.hidden = true;
       refreshControls();
-      restoreFocus([focused, focusFallback]);
+      if (!interacted) restoreFocus([focused, focusFallback]);
     }
   }
 
@@ -570,7 +585,12 @@
    * batch is still loading end up behind it (the list order is the page order of the result).
    */
   function addMergeFiles(files) {
-    const run = () => addMergeFilesNow(files);
+    mergeAddPending += 1;
+    const run = () =>
+      addMergeFilesNow(files).finally(() => {
+        mergeAddPending -= 1;
+        if (mergeAddPending === 0) mergeAddReport = { added: 0, errors: [] };
+      });
     mergeAddChain = mergeAddChain.then(run, run);
     return mergeAddChain;
   }
@@ -578,29 +598,28 @@
   async function addMergeFilesNow(files) {
     const message = files.length === 1 ? 'Datei wird geladen …' : `${files.length} Dateien werden geladen …`;
     await withBusy(message, async () => {
-      const added = [];
-      const errors = [];
+      const report = mergeAddReport;
       for (const file of files) {
         try {
           const loaded = await readPdfFile(file);
           const item = { id: `f${merge.nextId++}`, ...loaded, range: '', pages: null, error: null };
           merge.items.push(item);
-          added.push(item);
+          report.added += 1;
           clearMergeResult();
           renderMergeList();
           queueMergeThumbnail(item);
         } catch (err) {
-          errors.push(asSentence(errorMessage(err, file.name)));
+          report.errors.push(asSentence(errorMessage(err, file.name)));
         }
         await yieldToBrowser();
       }
 
-      const addedText = added.length ? `${filesLabel(added.length)} hinzugefügt.` : '';
-      if (errors.length) {
-        setStatus([addedText, ...errors].filter(Boolean).join(' '), 'error');
+      const addedText = report.added ? `${filesLabel(report.added)} hinzugefügt.` : '';
+      if (report.errors.length) {
+        setStatus([addedText, ...report.errors].filter(Boolean).join(' '), 'error');
       } else {
         const total = merge.items.length;
-        setStatus(total === added.length ? addedText : `${addedText} Insgesamt ${filesLabel(total)} in der Liste.`);
+        setStatus(total === report.added ? addedText : `${addedText} Insgesamt ${filesLabel(total)} in der Liste.`);
       }
     });
   }
@@ -670,7 +689,9 @@
     setStatus('Alle Dateien wurden entfernt.');
   }
 
+  /** Called on every change to the list or a page selection: the result no longer matches it. */
   function clearMergeResult() {
+    merge.changes += 1;
     if (merge.resultUrl) URL.revokeObjectURL(merge.resultUrl);
     merge.resultUrl = null;
     els.mergeResult.replaceChildren();
@@ -688,10 +709,16 @@
     const items = merge.items.slice();
     const sources = items.map((item) => ({ bytes: item.bytes, pages: item.pages || undefined, name: item.name }));
     const totalPages = items.reduce((sum, item) => sum + mergeSelectedPageCount(item), 0);
+    const changes = merge.changes;
 
     await withBusy(`${pagesLabel(totalPages)} ${totalPages === 1 ? 'wird' : 'werden'} zusammengeführt …`, async () => {
       try {
         const bytes = await Core.mergePdfs(sources, { title: Core.stripPdfExtension(fileName) });
+        // The list stays editable while merging: a result of the old list must not be downloaded.
+        if (merge.changes !== changes) {
+          setStatus('Die Auswahl wurde während des Zusammenführens geändert – bitte starte es erneut.');
+          return;
+        }
         const blob = new Blob([bytes], { type: 'application/pdf' });
         showMergeResult(blob, fileName, totalPages);
         setStatus(`Fertig! „${fileName}“ wurde erstellt (${pagesLabel(totalPages)}, ${formatBytes(blob.size)}).`, 'success');
@@ -830,8 +857,12 @@
       renderMergeItemValidity(item);
       updateMergeControls();
       clearMergeResult();
-      // The inline error is not a live region (that would read out every keystroke): announce it once settled.
-      if (item.error !== previousError) announce(item.error || '', { settled: true });
+      // The inline error is not a live region (that would read out every keystroke): announce it once
+      // settled. Naming the position keeps the same error in another file's field from being skipped
+      // as already read out.
+      if (item.error !== previousError) {
+        announce(item.error ? `Datei ${findMergeIndex(item.id) + 1}: ${item.error}` : '', { settled: true });
+      }
     });
 
     els.mergeList.addEventListener('keydown', (event) => {
@@ -927,8 +958,12 @@
       els.splitPagesHint.textContent = 'Nach dem Laden siehst du hier alle Seiten.';
     } else if (extract) {
       els.splitPagesHint.textContent = 'Klicke auf Seiten, um sie auszuwählen (Umschalt-Klick wählt einen Bereich).';
-    } else {
+    } else if (split.plan && split.plan.status === 'ok') {
       els.splitPagesHint.textContent = 'Die Zahl an jeder Seite zeigt, in welcher Datei sie landet.';
+    } else {
+      // Without a valid plan the pages carry no file numbers – only their page numbers.
+      els.splitPagesHint.textContent =
+        'Sobald die Aufteilung gültig ist, zeigt eine farbige Zahl an jeder Seite, in welcher Datei sie landet.';
     }
   }
 
@@ -1115,7 +1150,9 @@
     split.previewPromise = null;
   }
 
+  /** Called on every change to the file or the split settings: the results no longer match them. */
   function clearSplitResults() {
+    split.changes += 1;
     for (const url of split.resultUrls) URL.revokeObjectURL(url);
     split.resultUrls = [];
     els.splitResults.replaceChildren();
@@ -1242,6 +1279,7 @@
     const mode = currentSplitMode();
     const file = split.file;
     const token = split.token;
+    const changes = split.changes;
     const wantZip = els.splitZip.checked && plan.groups.length > 1 && mode !== 'extract';
     const busyText =
       mode === 'extract' ? 'Seiten werden extrahiert …' : `PDF wird in ${filesLabel(plan.groups.length)} geteilt …`;
@@ -1268,6 +1306,11 @@
         }
         // A different file was loaded while this one was being split: drop the stale results.
         if (token !== split.token) return;
+        // The settings stay editable while splitting: results of the old settings must not be downloaded.
+        if (split.changes !== changes) {
+          setStatus('Die Einstellungen wurden während des Teilens geändert – bitte starte es erneut.');
+          return;
+        }
         showSplitResults(outputs, zip);
 
         if (zip) {
@@ -1289,8 +1332,10 @@
     const archive = new window.JSZip();
     for (const output of outputs) archive.file(output.name, output.bytes);
     let lastPercent = -1;
+    // STORE: the PDFs' streams are already Flate-compressed, so DEFLATE would save under 1 %
+    // while taking several times as long for large splits.
     const blob = await archive.generateAsync(
-      { type: 'blob', mimeType: 'application/zip', compression: 'DEFLATE', compressionOptions: { level: 6 } },
+      { type: 'blob', mimeType: 'application/zip', compression: 'STORE' },
       (meta) => {
         const percent = Math.floor(meta.percent);
         if (percent !== lastPercent) {

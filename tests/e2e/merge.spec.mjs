@@ -281,3 +281,54 @@ test('ein altes Ergebnis verschwindet, sobald sich die Auswahl ändert', async (
   }
   await expectNoResult();
 });
+
+test('ein Fehler beim Laden bleibt sichtbar, auch wenn währenddessen weitere Dateien hinzukommen', async ({ page }) => {
+  const status = page.locator('#status');
+  await addMergeFiles(page, [pdfFile('1-gross.pdf', await createSlowPdf()), pdfFile('2-kaputt.pdf', createBrokenPdf())]);
+  // Added while the first batch is still loading: its success must not hide the earlier error.
+  await page.waitForTimeout(50);
+  await addMergeFiles(page, [pdfFile('3-a.pdf', fileA.buffer)]);
+
+  await expect(mergeItems(page)).toHaveCount(2, { timeout: 15_000 });
+  await expectIdle(page);
+  await expect(itemNames(page)).toHaveText(['1-gross.pdf', '3-a.pdf']);
+  await expect(status).toHaveClass(/is-error/);
+  await expect(status).toContainText('„2-kaputt.pdf“');
+  await expect(status).toContainText('2 Dateien hinzugefügt.');
+
+  // The next file added after loading has finished gets a report of its own.
+  await addMergeFiles(page, [pdfFile('4-c.pdf', fileC.buffer)]);
+  await expect(mergeItems(page)).toHaveCount(3);
+  await expect(status).toHaveText('1 Datei hinzugefügt. Insgesamt 3 Dateien in der Liste.');
+  await expect(status).not.toHaveClass(/is-error/);
+});
+
+test('wird die Liste während des Zusammenführens geändert, gibt es kein veraltetes Ergebnis', async ({ page }) => {
+  const downloads = [];
+  page.on('download', (download) => downloads.push(download.suggestedFilename()));
+  await addMergeFiles(page, [pdfFile('gross.pdf', await createSlowPdf()), pdfFile('klein.pdf', fileA.buffer)]);
+  await expect(mergeItems(page)).toHaveCount(2, { timeout: 15_000 });
+  await expectIdle(page);
+
+  await page.locator('#merge-run').click();
+  await expect(page.locator('#busy')).toBeVisible();
+  // The list stays editable while merging: remove klein.pdf before the merge has finished.
+  await mergeItems(page).nth(1).locator('.merge-item-remove').click();
+  await expect(mergeItems(page)).toHaveCount(1);
+  await expectIdle(page);
+
+  await expect(page.locator('#status')).toHaveText(
+    'Die Auswahl wurde während des Zusammenführens geändert – bitte starte es erneut.',
+  );
+  await expect(page.locator('#merge-result')).toBeHidden();
+  await expect(page.locator('#merge-download')).toHaveCount(0);
+  // Give a (wrongly) triggered download a moment to show up.
+  await page.waitForTimeout(300);
+  expect(downloads, 'das Ergebnis der alten Liste darf nicht heruntergeladen werden').toEqual([]);
+
+  const download = await captureDownload(page, () => page.locator('#merge-run').click());
+  expect(download.suggestedFilename()).toBe('zusammengefuehrt.pdf');
+  const widths = await readPageWidths(await downloadBytes(download));
+  expect(widths).toHaveLength(3000);
+  expect(widths.at(-1)).toBe(3899);
+});

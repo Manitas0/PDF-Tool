@@ -13,6 +13,25 @@ import {
 const horizontalOverflow = (page) =>
   page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 
+// Names that differ only at the end: both must be readable in full.
+const SIMILAR_NAMES = ['Arbeitszeugnis_Firma_Schmidt_2019.pdf', 'Arbeitszeugnis_Firma_Schmidt_2021.pdf'];
+
+/** Texts of the merge list names that are cut off. */
+const clippedMergeNames = (page) =>
+  page
+    .locator('#merge-list .merge-item-name')
+    .evaluateAll((elements) =>
+      elements.filter((element) => element.scrollWidth > element.clientWidth).map((element) => element.textContent),
+    );
+
+let PDF_2;
+let PDF_9;
+
+test.beforeAll(async () => {
+  PDF_2 = await createPdf(2);
+  PDF_9 = await createPdf(9);
+});
+
 test.describe('schmaler Bildschirm (360 px)', () => {
   test.use({ viewport: { width: 360, height: 740 } });
 
@@ -27,6 +46,15 @@ test.describe('schmaler Bildschirm (360 px)', () => {
 
     await loadSplitFile(page, pdfFile('bericht.pdf', await createPdf(6, { baseWidth: 500 })));
     await expect(splitThumbs(page)).toHaveCount(6);
+    expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+  });
+
+  test('lange, ähnliche Dateinamen in der Liste werden umbrochen statt abgeschnitten', async ({ page }) => {
+    await page.goto('/');
+    await addMergeFiles(page, SIMILAR_NAMES.map((name) => pdfFile(name, PDF_2)));
+    await expect(mergeItems(page)).toHaveCount(2);
+    await expect(page.locator('#merge-list .merge-item-name')).toHaveText(SIMILAR_NAMES);
+    expect(await clippedMergeNames(page), 'abgeschnittene Dateinamen').toEqual([]);
     expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
   });
 
@@ -55,6 +83,31 @@ test.describe('schmaler Bildschirm (360 px)', () => {
     expect(clipped, 'abgeschnittene Dateinamen').toEqual([]);
     expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
   });
+});
+
+test('eine lange Fehlermeldung verschiebt das Seitenfeld nicht und kürzt den Dateinamen nicht', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/');
+  await addMergeFiles(page, SIMILAR_NAMES.map((name) => pdfFile(name, PDF_9)));
+  await expect(mergeItems(page)).toHaveCount(2);
+  const item = mergeItems(page).first();
+  const range = item.locator('.merge-item-range');
+
+  await range.fill('1-3, 7');
+  await expect(item.locator('.merge-item-error')).toHaveCount(0);
+  const before = await range.boundingBox();
+
+  await range.fill('1-3, 7 bis'); // a long message (invalid input)
+  await expect(item.locator('.merge-item-error')).toBeVisible();
+  const after = await range.boundingBox();
+  expect(Math.round(after.x)).toBe(Math.round(before.x));
+  expect(Math.round(after.width)).toBe(Math.round(before.width));
+  expect(await clippedMergeNames(page), 'abgeschnittene Dateinamen').toEqual([]);
+  // The message wraps inside the row instead of widening it.
+  const row = await item.boundingBox();
+  const error = await item.locator('.merge-item-error').boundingBox();
+  expect(error.x + error.width).toBeLessThanOrEqual(row.x + row.width + 0.5);
+  expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
 });
 
 test('ungenutzte Seiten sind abgeblendet, ihre Seitenzahl bleibt gut lesbar', async ({ page }) => {
