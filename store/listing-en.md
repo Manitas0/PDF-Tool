@@ -129,10 +129,10 @@ PDF tool
 **Copyright and trademark info** (at most 200 characters):
 
 ```text
-© 2026 [publisher name]
+© 2026 Maniapps
 ```
 
-**Developed by** (optional): `[publisher name]`
+**Developed by** (optional): `Maniapps`
 
 **Additional license terms:** leave empty – the standard Microsoft Store license terms then apply.
 

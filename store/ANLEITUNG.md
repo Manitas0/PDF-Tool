@@ -39,22 +39,19 @@ Tage) und die Zertifizierung der App (meist bis zu drei Werktage).
 
 ## Schritt 0: Vorbereitungen im Repository
 
-1. **Datenschutzerklärung vervollständigen.** Öffne [`PRIVACY.md`](../PRIVACY.md) und ersetze unter
-   „1. Verantwortlicher“ und „1. Controller“ die Platzhalter in `[eckigen Klammern]` durch deinen Namen und
-   deine Kontaktdaten. Entferne danach die beiden Hinweiskästen „Bitte ausfüllen …“ bzw.
-   „Please fill in …“. Ob du eine Postanschrift angeben musst, hängt von deiner Situation ab (z. B. ob du
-   geschäftsmäßig handelst) – im Zweifel lass dich rechtlich beraten.
-2. **Änderungen auf GitHub speichern.** Die Datei muss im Standard-Branch des Repositorys liegen, damit der
-   Link funktioniert. (Auf GitHub geht das auch direkt im Browser: Datei öffnen → Stift-Symbol → bearbeiten →
-   „Commit changes“.)
+1. **Datenschutzerklärung:** [`PRIVACY.md`](../PRIVACY.md) ist fertig und enthält **keine persönlichen
+   Angaben** – als Herausgeber steht dort nur „Maniapps“, als Kontakt die Issues-Seite des GitHub-Repositorys.
+   Die App erhebt keine personenbezogenen Daten; deshalb muss dort niemand mit Name und Anschrift stehen.
+2. **Die Datei liegt bereits im Standard-Branch des Repositorys**, damit der Link funktioniert. Änderst du sie
+   später, geht das auch direkt im Browser: Datei öffnen → Stift-Symbol → bearbeiten → „Commit changes“.
 3. **Link prüfen.** Die Adresse der Datenschutzerklärung für Partner Center lautet:
 
    ```text
    https://github.com/Manitas0/PDF-Tool/blob/ccr-ed9e82a7-09b8fo/PRIVACY.md
    ```
 
-   Öffne sie in einem privaten Browserfenster (ohne GitHub-Anmeldung): Die Datenschutzerklärung muss mit
-   deinen Angaben erscheinen.
+   Öffne sie in einem privaten Browserfenster (ohne GitHub-Anmeldung): Die Datenschutzerklärung muss
+   erscheinen.
 
    Der Teil `ccr-ed9e82a7-09b8fo` ist der Name des aktuellen Standard-Branchs. **Benennst du den Branch um**
    (z. B. in `main`), ändert sich die Adresse. GitHub leitet alte Datei-Links nach einer Umbenennung zwar
@@ -66,11 +63,10 @@ Tage) und die Zertifizierung der App (meist bis zu drei Werktage).
    https://github.com/Manitas0/PDF-Tool/blob/HEAD/PRIVACY.md
    ```
 
-4. **Support-Kontakt festlegen.** Der Store verlangt eine Kontaktmöglichkeit (E-Mail-Adresse oder Webseite).
-   Am einfachsten ist eine eigene E-Mail-Adresse für Anfragen zu PDF-Tool. Die GitHub-Seite
-   `https://github.com/Manitas0/PDF-Tool/issues` geht auch, setzt bei Nutzern aber ein GitHub-Konto voraus.
-5. **Platzhalter in den Store-Texten** (`[Name des Herausgebers]` usw. in `listing-de.md` und `listing-en.md`)
-   füllst du erst beim Kopieren in Partner Center aus.
+4. **Support-Kontakt:** Als Kontaktmöglichkeit dient `https://github.com/Manitas0/PDF-Tool/issues` – ohne
+   E-Mail-Adresse. Nutzer brauchen dafür ein (kostenloses) GitHub-Konto.
+5. Die Store-Texte in `listing-de.md` und `listing-en.md` sind fertig – auch dort sind keine persönlichen Angaben
+   nötig.
 
 ## Schritt 1: Entwicklerkonto anlegen
 
@@ -192,7 +188,7 @@ erhalten.
 - **Kategorie** (Category): **Produktivität** (Productivity). Eine Unterkategorie gibt es dort nicht.
 - **URL der Datenschutzrichtlinie** (Privacy policy URL): die Adresse aus Schritt 0.
 - **Website**: `https://github.com/Manitas0/PDF-Tool`
-- **Support-Kontaktinformationen** (Support contact info): deine Support-E-Mail-Adresse aus Schritt 0.
+- **Support-Kontaktinformationen** (Support contact info): `https://github.com/Manitas0/PDF-Tool/issues`
 - Falls gefragt wird, ob die App personenbezogene Daten **erfasst, darauf zugreift oder überträgt**: **Nein**.
 - **Produktdeklarationen** (Product declarations): Standardwerte lassen; nur ankreuzen, was wirklich zutrifft.
 - **Systemanforderungen** (System requirements): kann leer bleiben.
@@ -228,7 +224,7 @@ sobald die Pakete hochgeladen sind).
    - **Store-Logos** (Store logos): optional – ohne sie verwendet der Store das Logo aus dem Paket
    - unter *Zusätzliche Felder* (Supplemental fields): **Kurzbeschreibung** (Short description), **Kurzer Titel**,
      **Suchbegriffe** (Search terms – je ein Begriff pro Feld), **Copyright- und Markeninformationen**,
-     **Entwickelt von** – Platzhalter in `[eckigen Klammern]` dabei durch deinen Namen ersetzen
+     **Entwickelt von** – dort steht bereits „Maniapps“
    - **Zusätzliche Lizenzbedingungen**: leer lassen
 3. Speichern.
 4. *Optional* einen englischen Eintrag ergänzen: **Weitere Sprachen verwalten** (Manage additional languages) →

@@ -5,7 +5,7 @@ Feld: Inhalt markieren, kopieren, einfügen. Die Zeichenangaben sind die Grenzen
 Oktober 2026 – maßgeblich ist, was Partner Center beim Ausfüllen anzeigt). Der englische Eintrag steht in
 [`listing-en.md`](listing-en.md), die Schritt-für-Schritt-Anleitung in [`ANLEITUNG.md`](ANLEITUNG.md).
 
-Felder mit `[eckigen Klammern]` musst du selbst ausfüllen.
+Alle Felder sind fertig ausgefüllt; persönliche Angaben (Name, Adresse, E-Mail) sind nirgends nötig.
 
 ## Produktname
 
@@ -133,10 +133,10 @@ PDF offline
 **Copyright- und Markeninformationen** (höchstens 200 Zeichen):
 
 ```text
-© 2026 [Name des Herausgebers]
+© 2026 Maniapps
 ```
 
-**Entwickelt von** (optional): `[Name des Herausgebers]`
+**Entwickelt von** (optional): `Maniapps`
 
 **Zusätzliche Lizenzbedingungen:** leer lassen – dann gelten die Standard-Lizenzbedingungen des Microsoft Store.
 
@@ -149,7 +149,7 @@ Diese Felder stehen nicht im Store-Eintrag, sondern auf der Seite **Eigenschafte
 | Kategorie | **Produktivität** (Alternative: Dienstprogramme & Tools) |
 | URL der Datenschutzrichtlinie | `https://github.com/Manitas0/PDF-Tool/blob/ccr-ed9e82a7-09b8fo/PRIVACY.md` (siehe Anleitung, Schritt 0) |
 | Website | `https://github.com/Manitas0/PDF-Tool` |
-| Support-Kontaktinformationen | `[deine Support-E-Mail-Adresse]` – oder `https://github.com/Manitas0/PDF-Tool/issues` (dafür brauchen Nutzer aber ein GitHub-Konto) |
+| Support-Kontaktinformationen | `https://github.com/Manitas0/PDF-Tool/issues` |
 
 ## Altersfreigabe
 

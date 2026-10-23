@@ -16,15 +16,14 @@ Repositorys <https://github.com/Manitas0/PDF-Tool>.
 - Wer die App über den **Microsoft Store** bezieht oder die **Web-Version über GitHub Pages** aufruft, bei dem
   verarbeiten Microsoft bzw. GitHub als Anbieter dieser Plattformen eigene Daten (siehe Abschnitte 5 und 6).
 
-## 1. Verantwortlicher
+## 1. Herausgeber und Kontakt
 
-> **Bitte ausfüllen, bevor diese Datenschutzerklärung veröffentlicht oder im Partner Center eingetragen wird:**
-> Name und Kontaktdaten des Herausgebers einsetzen und diesen Hinweis entfernen.
+PDF-Tool (im Microsoft Store: „PDF Tool Pro Premium Plus“) wird von **Maniapps** als kostenloses, privates
+Projekt veröffentlicht. Der Herausgeber erhebt und verarbeitet über die App **keine personenbezogenen Daten**
+(siehe Abschnitte 2 bis 4) und erhält auch keine Daten über dich.
 
-[Vorname Nachname bzw. Name des Unternehmens]  
-[Straße und Hausnummer]  
-[Postleitzahl und Ort, Land]  
-E-Mail: [E-Mail-Adresse]
+Fragen zum Datenschutz oder zur App kannst du über die Issues des GitHub-Repositorys stellen:
+<https://github.com/Manitas0/PDF-Tool/issues> (siehe Abschnitt 7).
 
 ## 2. Wie PDF-Tool mit deinen Dateien umgeht
 
@@ -87,12 +86,12 @@ und [About GitHub Pages – Abschnitt „Data collection“](https://docs.github
 
 Dasselbe gilt, wenn du das Repository oder diese Datenschutzerklärung auf github.com aufrufst.
 
-## 7. Kontakt per E-Mail
+## 7. Kontakt über GitHub
 
-Schreibst du dem Herausgeber (z. B. an die Support-Adresse im Microsoft Store), werden deine Angaben – in der
-Regel E-Mail-Adresse, Name und Inhalt der Nachricht – nur verwendet, um deine Anfrage zu beantworten
-(Art. 6 Abs. 1 lit. b bzw. f DSGVO), und gelöscht, wenn sie dafür nicht mehr benötigt werden und keine
-gesetzlichen Aufbewahrungspflichten bestehen.
+Für Kontakt mit dem Herausgeber gibt es die Issues des GitHub-Repositorys. Dafür brauchst du ein GitHub-Konto;
+GitHub verarbeitet die Daten dieses Kontos nach seiner eigenen Datenschutzerklärung (siehe Abschnitt 6).
+**Issues sind öffentlich sichtbar** – schreibe dort keine persönlichen Daten und hänge keine vertraulichen
+Dateien an. Der Herausgeber nutzt deine Angaben nur, um deine Anfrage zu beantworten.
 
 ## 8. Deine Rechte
 
@@ -127,15 +126,14 @@ from the Microsoft Store), the web version in the browser and the downloaded fil
 - If you get the app from the **Microsoft Store** or open the **web version on GitHub Pages**, Microsoft or
   GitHub, as the providers of those platforms, process data of their own (see sections 5 and 6).
 
-## 1. Controller
+## 1. Publisher and contact
 
-> **Please fill in before this privacy policy is published or entered in Partner Center:**
-> insert the publisher's name and contact details and remove this note.
+PDF-Tool (in the Microsoft Store: “PDF Tool Pro Premium Plus”) is published by **Maniapps** as a free,
+private project. The publisher does **not collect or process any personal data** through the app (see sections
+2 to 4) and does not receive any data about you.
 
-[First name Last name or company name]  
-[Street and number]  
-[Postal code and city, country]  
-Email: [email address]
+Questions about privacy or the app can be asked via the issues of the GitHub repository:
+<https://github.com/Manitas0/PDF-Tool/issues> (see section 7).
 
 ## 2. How PDF-Tool handles your files
 
@@ -195,11 +193,12 @@ and [data collection on GitHub Pages](https://docs.github.com/en/pages/getting-s
 
 The same applies when you view the repository or this privacy policy on github.com.
 
-## 7. Contact by email
+## 7. Contact via GitHub
 
-If you write to the publisher (e.g. to the support address in the Microsoft Store), your details – usually email
-address, name and the content of the message – are used only to answer your request (Art. 6(1)(b) or (f) GDPR)
-and are deleted once they are no longer needed for this and no statutory retention obligations apply.
+To contact the publisher, use the issues of the GitHub repository. This requires a GitHub account; GitHub
+processes the data of that account under its own privacy statement (see section 6). **Issues are publicly
+visible** – do not post personal data there or attach confidential files. The publisher uses what you write only
+to answer your request.
 
 ## 8. Your rights
 
