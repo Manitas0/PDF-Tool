@@ -30,7 +30,7 @@ Tage) und die Zertifizierung der App (meist bis zu drei Werktage).
 - [Schritt 1: Entwicklerkonto anlegen](#schritt-1-entwicklerkonto-anlegen)
 - [Schritt 2: App-Namen reservieren](#schritt-2-app-namen-reservieren)
 - [Schritt 3: Identitätswerte heraussuchen](#schritt-3-identitätswerte-heraussuchen)
-- [Schritt 4: Werte als GitHub-Variablen eintragen](#schritt-4-werte-als-github-variablen-eintragen)
+- [Schritt 4: Werte im Projekt eintragen](#schritt-4-werte-im-projekt-eintragen)
 - [Schritt 5: Store-Paket bauen lassen und herunterladen](#schritt-5-store-paket-bauen-lassen-und-herunterladen)
 - [Schritt 6: Einreichung ausfüllen](#schritt-6-einreichung-ausfüllen)
 - [Schritt 7: Zertifizierung und Veröffentlichung](#schritt-7-zertifizierung-und-veröffentlichung)
@@ -121,37 +121,32 @@ reserviert.
 3. Dort stehen die Werte, die Microsoft deiner App zugeteilt hat. Du brauchst drei davon, dazu den reservierten
    Namen aus Schritt 2:
 
-   | In Partner Center | Beispiel (deine Werte sehen anders aus) | GitHub-Variable |
+   | In Partner Center | Wert für diese App | Feld in `desktop/package.json` (`build.appx`) |
    |---|---|---|
-   | `Package/Identity/Name` | `12345Manitas0.PDF-ToolZusammenfhrenTeilen` | `MSSTORE_IDENTITY_NAME` |
-   | `Package/Identity/Publisher` | `CN=1A2B3C4D-5E6F-7A8B-9C0D-1E2F3A4B5C6D` | `MSSTORE_PUBLISHER` |
-   | `Package/Properties/PublisherDisplayName` | `Max Mustermann` | `MSSTORE_PUBLISHER_DISPLAY_NAME` |
-   | der reservierte App-Name (Schritt 2) | `PDF-Tool – Zusammenführen & Teilen` | `MSSTORE_DISPLAY_NAME` |
+   | `Package/Identity/Name` | `Maniapps.PDFToolProPremiumPlus` | `identityName` |
+   | `Package/Identity/Publisher` | `CN=22C9069C-D721-419C-A15F-04FF8F852D3D` | `publisher` |
+   | `Package/Properties/PublisherDisplayName` | `Maniapps` | `publisherDisplayName` |
+   | der reservierte App-Name (Schritt 2) | `PDF Tool Pro Premium Plus` | `displayName` |
 
-4. Werte **vollständig und exakt** kopieren – am besten mit dem Kopier-Symbol daneben. `MSSTORE_PUBLISHER`
-   beginnt immer mit `CN=`. Keine Leerzeichen am Anfang oder Ende.
+4. Bei einer anderen App: Werte **vollständig und exakt** kopieren – am besten mit dem Kopier-Symbol daneben.
+   `publisher` beginnt immer mit `CN=`. Keine Leerzeichen am Anfang oder Ende.
 
 Diese Werte sind nicht geheim: Sie stehen in jedem veröffentlichten Paket.
 
-## Schritt 4: Werte als GitHub-Variablen eintragen
+## Schritt 4: Werte im Projekt eintragen
 
-Der Workflow, der das Store-Paket baut, liest die Werte aus vier Variablen des Repositorys. Dafür brauchst du
-Administratorrechte im Repository (als Besitzer hast du sie).
+**Für „PDF Tool Pro Premium Plus“ ist das schon erledigt** – die Werte aus Schritt 3 stehen in
+[`desktop/package.json`](../desktop/package.json) im Abschnitt `"appx"`. Ändern musst du sie nur, wenn sich die
+Produktidentität oder der reservierte Name ändert:
 
-1. Auf GitHub das Repository <https://github.com/Manitas0/PDF-Tool> öffnen.
-2. Oben **Settings** (Einstellungen) → links **Secrets and variables** → **Actions**.
-3. Den Reiter **Variables** wählen (**nicht** „Secrets“ – Secrets liest der Workflow nicht).
-4. **New repository variable** klicken, Name und Wert eintragen, **Add variable** klicken. Das viermal:
+1. Auf GitHub die Datei `desktop/package.json` öffnen und rechts oben auf das Stift-Symbol (*Edit this file*)
+   klicken.
+2. Im Abschnitt `"appx"` die Werte von `identityName`, `publisher`, `publisherDisplayName` und `displayName`
+   ersetzen (die Anführungszeichen stehen lassen).
+3. **Commit changes** klicken. Danach baut GitHub die Store-Pakete automatisch neu (Schritt 5).
 
-   | Name (genau so schreiben) | Wert |
-   |---|---|
-   | `MSSTORE_IDENTITY_NAME` | `Package/Identity/Name` aus Schritt 3 |
-   | `MSSTORE_PUBLISHER` | `Package/Identity/Publisher` aus Schritt 3 (mit `CN=`) |
-   | `MSSTORE_PUBLISHER_DISPLAY_NAME` | `Package/Properties/PublisherDisplayName` aus Schritt 3 |
-   | `MSSTORE_DISPLAY_NAME` | der reservierte App-Name aus Schritt 2 |
-
-Fehlt eine der vier Variablen, baut der Workflow nur ein **Testpaket** (Identität `PDFTool.Test`), das Partner
-Center ablehnt.
+Ist ein Wert offensichtlich falsch kopiert (z. B. `publisher` ohne `CN=`), bricht der Bau mit einer roten
+Fehlermeldung ab, statt ein Paket zu erzeugen, das Partner Center ablehnt.
 
 ## Schritt 5: Store-Paket bauen lassen und herunterladen
 
@@ -162,9 +157,9 @@ Center ablehnt.
    Dann den grünen Knopf **Run workflow** klicken.
 4. Nach einigen Sekunden erscheint der Lauf in der Liste. Er dauert etwa 15 bis 30 Minuten. Fertig ist er, wenn
    davor ein grüner Haken (oder ein rotes Kreuz, siehe [Häufige Probleme](#häufige-probleme)) steht.
-5. Den Lauf anklicken. Steht in der Übersicht eine gelbe Warnung „Keine vollständige Microsoft-Store-Identität
-   …“, fehlt eine Variable oder ihr Name ist falsch geschrieben → Schritt 4 prüfen und den Workflow erneut
-   starten. Ein roter Fehler „MSSTORE_PUBLISHER muss mit „CN=“ beginnen“ o. ä. bedeutet: Wert falsch kopiert.
+5. Den Lauf anklicken. Ein roter Fehler wie „build.appx.publisher muss mit „CN=“ beginnen“ bedeutet: Wert in
+   Schritt 4 falsch kopiert. In der Zusammenfassung des Laufs steht eine Tabelle mit der Identität beider Pakete –
+   sie muss zu Schritt 3 passen.
 6. Ganz unten unter **Artifacts** auf **PDF-Tool-Microsoft-Store** klicken (dafür musst du bei GitHub angemeldet
    sein). Es lädt eine ZIP-Datei herunter.
 7. Die ZIP-Datei entpacken. Darin liegen zwei Pakete – beide werden hochgeladen:
@@ -302,9 +297,8 @@ Git-Tag `v…` (siehe README, Abschnitt „Windows-Desktop-App“).
 
 | Meldung oder Problem | Ursache und Lösung |
 |---|---|
-| Partner Center meldet, Paketname oder Herausgeber (Publisher) **passen nicht** zur App | `MSSTORE_IDENTITY_NAME` oder `MSSTORE_PUBLISHER` weichen von der Produktidentität ab. Werte in Schritt 3 neu kopieren, Variablen korrigieren, Workflow neu starten, neue Pakete hochladen. |
-| Der **Anzeigename** passt nicht zu einem reservierten Namen | `MSSTORE_DISPLAY_NAME` muss zeichengenau dem reservierten Namen entsprechen (auch „-“ und „–“ unterscheiden sich). |
-| Paket mit der Identität **PDFTool.Test** bzw. `CN=PDF-Tool-Test` | Die Variablen fehlten beim Bau (Schritt 4). Ergänzen und den Workflow neu starten. |
+| Partner Center meldet, Paketname oder Herausgeber (Publisher) **passen nicht** zur App | `identityName` oder `publisher` in `desktop/package.json` weichen von der Produktidentität ab. Werte in Schritt 3 neu kopieren, in Schritt 4 korrigieren, neue Pakete hochladen. |
+| Der **Anzeigename** passt nicht zu einem reservierten Namen | `displayName` in `desktop/package.json` muss zeichengenau dem reservierten Namen entsprechen (auch „-“ und „–“ unterscheiden sich). |
 | **Version** schon vorhanden bzw. zu niedrig | Version in `desktop/package.json` erhöhen (Schritt 8), neu bauen. |
 | Hinweis auf **eingeschränkte Funktion runFullTrust** | Normal für Desktop-Apps. Begründung aus Abschnitt 6.6 einfügen. |
 | Artefakt **PDF-Tool-Microsoft-Store** fehlt oder ist abgelaufen | Lauf mit rotem Kreuz: Fehlermeldung im Lauf lesen. Abgelaufen: Workflow erneut starten. |

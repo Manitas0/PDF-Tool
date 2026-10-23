@@ -10,9 +10,8 @@ Beschreibung, damit niemand eine englische App erwartet.
 
 ## Product name
 
-Es gilt derselbe reservierte Name wie im deutschen Eintrag (siehe [`listing-de.md`](listing-de.md)). Wer für
-Englisch einen eigenen Namen möchte, kann zusätzlich z. B. `PDF-Tool – Merge & Split` reservieren; einfacher ist
-ein Name für alle Sprachen.
+Es gilt derselbe reservierte Name wie im deutschen Eintrag: **`PDF Tool Pro Premium Plus`** (siehe
+[`listing-de.md`](listing-de.md)).
 
 ## Short description
 

@@ -232,11 +232,9 @@ mit Installation per Klick und automatischen Updates über den Store.
 - **Datenschutzerklärung:** [`PRIVACY.md`](PRIVACY.md)
 
 Die Pakete (je eine `.appx`-Datei für x64 und arm64) baut der Workflow „Desktop“ als Artefakt
-„PDF-Tool-Microsoft-Store“. Die Identität der App im Store kommt aus den Repository-Variablen
-`MSSTORE_IDENTITY_NAME`, `MSSTORE_PUBLISHER`, `MSSTORE_PUBLISHER_DISPLAY_NAME` und `MSSTORE_DISPLAY_NAME`
-(*Settings → Secrets and variables → Actions → Variables*); fehlen sie, entsteht nur ein Testpaket, das der Store
-ablehnt. Unter Windows geht es auch lokal mit `npm run dist:store` im Ordner `desktop/` (Identität dann über
-gleichnamige Umgebungsvariablen).
+„PDF-Tool-Microsoft-Store“. Die Identität der App im Store („PDF Tool Pro Premium Plus“ von Maniapps, aus
+Partner Center → Produktidentität) steht in `desktop/package.json` unter `build.appx`. Unter Windows geht es auch
+lokal mit `npm run dist:store` im Ordner `desktop/`.
 
 ## Seitenangaben – Syntax
 

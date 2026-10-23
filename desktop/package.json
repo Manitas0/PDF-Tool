@@ -80,10 +80,10 @@
     },
     "appx": {
       "artifactName": "PDF-Tool-Store-${version}-${arch}.${ext}",
-      "identityName": "PDFTool.Test",
-      "publisher": "CN=PDF-Tool-Test",
-      "publisherDisplayName": "PDF-Tool",
-      "displayName": "PDF-Tool",
+      "identityName": "Maniapps.PDFToolProPremiumPlus",
+      "publisher": "CN=22C9069C-D721-419C-A15F-04FF8F852D3D",
+      "publisherDisplayName": "Maniapps",
+      "displayName": "PDF Tool Pro Premium Plus",
       "applicationId": "PDFTool",
       "languages": [
         "de-DE"

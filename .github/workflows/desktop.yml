@@ -244,16 +244,6 @@ jobs:
     defaults:
       run:
         working-directory: desktop
-    env:
-      # Package identity from Partner Center (Produktverwaltung → Produktidentität), kept as repository
-      # variables – not secrets, they appear in every package anyway (Settings → Secrets and variables →
-      # Actions → Variables). scripts/dist-store.mjs reads them from the environment, so values such as
-      # "CN=…, O=…" need no quoting. Without all four it builds with the test identity of package.json
-      # and warns that the package is only good for testing.
-      MSSTORE_IDENTITY_NAME: ${{ vars.MSSTORE_IDENTITY_NAME }}
-      MSSTORE_PUBLISHER: ${{ vars.MSSTORE_PUBLISHER }}
-      MSSTORE_PUBLISHER_DISPLAY_NAME: ${{ vars.MSSTORE_PUBLISHER_DISPLAY_NAME }}
-      MSSTORE_DISPLAY_NAME: ${{ vars.MSSTORE_DISPLAY_NAME }}
 
     steps:
       - name: Checkout
@@ -286,10 +276,8 @@ jobs:
           # Every tile image must come from build/appx – none of electron-builder's sample images.
           $expectedAssets = (Get-ChildItem build/appx -File).Name | Sort-Object
           $summary = @('| Paket | Größe | Identity Name | Publisher | Version |', '|---|---|---|---|---|')
-          # With all four repository variables set, the packages must carry exactly that identity.
-          $store = 'MSSTORE_IDENTITY_NAME', 'MSSTORE_PUBLISHER', 'MSSTORE_PUBLISHER_DISPLAY_NAME', 'MSSTORE_DISPLAY_NAME' |
-            ForEach-Object { "$([Environment]::GetEnvironmentVariable($_))".Trim() }
-          $expectStoreIdentity = $store -notcontains ''
+          # The packages must carry exactly the Store identity of package.json (build.appx).
+          $store = (Get-Content -Raw -Encoding UTF8 package.json | ConvertFrom-Json).build.appx
 
           foreach ($arch in 'x64', 'arm64') {
             $file = "dist/PDF-Tool-Store-$version-$arch.appx"
@@ -304,9 +292,9 @@ jobs:
               if ($identity.ProcessorArchitecture -ne $arch) { throw "$file ist für $($identity.ProcessorArchitecture) statt $arch gebaut" }
               if ($identity.Version -ne "$version.0") { throw "$file hat die Version $($identity.Version) statt $version.0" }
               $properties = $manifest.Package.Properties
-              if ($expectStoreIdentity -and ($identity.Name -ne $store[0] -or $identity.Publisher -ne $store[1] -or
-                  $properties.PublisherDisplayName -ne $store[2] -or $properties.DisplayName -ne $store[3])) {
-                throw "$file hat nicht die Store-Identität aus den Repository-Variablen"
+              if ($identity.Name -cne $store.identityName -or $identity.Publisher -cne $store.publisher -or
+                  $properties.PublisherDisplayName -cne $store.publisherDisplayName -or $properties.DisplayName -cne $store.displayName) {
+                throw "$file hat nicht die Store-Identität aus package.json (build.appx)"
               }
               $assets = $entries | Where-Object { $_ -like 'assets/*' } | ForEach-Object { $_.Substring(7) } | Sort-Object
               if (Compare-Object $expectedAssets $assets) { throw "Die Bilder in $file entsprechen nicht desktop/build/appx" }

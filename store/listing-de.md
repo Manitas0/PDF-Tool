@@ -9,14 +9,8 @@ Felder mit `[eckigen Klammern]` musst du selbst ausfüllen.
 
 ## Produktname
 
-Der Name wird nicht hier eingetippt, sondern vorher reserviert (Anleitung, Schritt 2) und dann ausgewählt. Er
-muss **im ganzen Microsoft Store einmalig** sein; ob er frei ist, zeigt Partner Center beim Reservieren.
-Vorschläge, in dieser Reihenfolge ausprobieren:
-
-1. `PDF-Tool` – kurz und wie die App heißt (vermutlich schon vergeben)
-2. `PDF-Tool – Zusammenführen & Teilen`
-3. `PDF-Tool Offline`
-4. `PDF zusammenführen & teilen – offline`
+Reserviert: **`PDF Tool Pro Premium Plus`** (Herausgeber: Maniapps). Der Name wird nicht hier eingetippt, sondern
+in Partner Center ausgewählt; er steht so auch im Store-Paket (`desktop/package.json`, `build.appx.displayName`).
 
 Keine fremden Marken verwenden (z. B. „Adobe“, „Acrobat“, „Microsoft“). Der reservierte Name erscheint im Store
 und im Startmenü; der Fenstertitel der App bleibt „PDF-Tool“.
