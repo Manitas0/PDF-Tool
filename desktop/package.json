@@ -11,7 +11,8 @@
     "start": "npm run prepare-app && electron .",
     "test": "npm run prepare-app && playwright test -c playwright.config.mjs",
     "dist:win": "npm run prepare-app && electron-builder --win --publish never",
-    "dist:dir": "npm run prepare-app && electron-builder --dir"
+    "dist:dir": "npm run prepare-app && electron-builder --dir",
+    "dist:store": "npm run prepare-app && node scripts/dist-store.mjs"
   },
   "devDependencies": {
     "electron": "44.7.0",
@@ -76,6 +77,25 @@
       "buildUniversalInstaller": false,
       "artifactName": "PDF-Tool-${version}-portable-${arch}.${ext}",
       "splashImage": "build/splash.bmp"
+    },
+    "appx": {
+      "artifactName": "PDF-Tool-Store-${version}-${arch}.${ext}",
+      "identityName": "PDFTool.Test",
+      "publisher": "CN=PDF-Tool-Test",
+      "publisherDisplayName": "PDF-Tool",
+      "displayName": "PDF-Tool",
+      "applicationId": "PDFTool",
+      "languages": [
+        "de-DE"
+      ],
+      "backgroundColor": "transparent",
+      "showNameOnTiles": true,
+      "capabilities": [
+        "runFullTrust"
+      ],
+      "addAutoLaunchExtension": false,
+      "minVersion": "10.0.17763.0",
+      "maxVersionTested": "10.0.26100.0"
     }
   }
 }

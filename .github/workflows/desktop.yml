@@ -2,7 +2,8 @@ name: Desktop
 
 # Builds the Windows desktop app (desktop/, Electron) for x64 and ARM64 and tests it on a real
 # Windows machine. On a tag v* the installers and the portable versions are additionally published
-# as a GitHub Release.
+# as a GitHub Release. The job msstore builds the Microsoft Store package (MSIX/AppX) alongside; it
+# only ends up as a workflow artifact, never in a release.
 
 on:
   push:
@@ -230,3 +231,307 @@ jobs:
 
             Die App ist nicht signiert. Beim ersten Start zeigt Windows deshalb „Der Computer wurde durch Windows geschützt“: auf **„Weitere Informationen“** und dann **„Trotzdem ausführen“** klicken.
             Details stehen in der README unter „Windows-Desktop-App“.
+
+  # Microsoft Store package (MSIX/AppX) for x64 and ARM64 – independent of the release flow above and
+  # never part of a GitHub Release. The packages stay unsigned: the Store signs them after the upload
+  # in Partner Center. To test the x64 package on the runner, a copy is signed with a throwaway
+  # certificate, installed, started and removed again.
+  msstore:
+    name: Microsoft-Store-Paket bauen und testen
+    runs-on: windows-latest
+    # Leaves room for the certification kit, which may need up to 30 minutes on its own.
+    timeout-minutes: 75
+    defaults:
+      run:
+        working-directory: desktop
+    env:
+      # Package identity from Partner Center (Produktverwaltung → Produktidentität), kept as repository
+      # variables – not secrets, they appear in every package anyway (Settings → Secrets and variables →
+      # Actions → Variables). scripts/dist-store.mjs reads them from the environment, so values such as
+      # "CN=…, O=…" need no quoting. Without all four it builds with the test identity of package.json
+      # and warns that the package is only good for testing.
+      MSSTORE_IDENTITY_NAME: ${{ vars.MSSTORE_IDENTITY_NAME }}
+      MSSTORE_PUBLISHER: ${{ vars.MSSTORE_PUBLISHER }}
+      MSSTORE_PUBLISHER_DISPLAY_NAME: ${{ vars.MSSTORE_PUBLISHER_DISPLAY_NAME }}
+      MSSTORE_DISPLAY_NAME: ${{ vars.MSSTORE_DISPLAY_NAME }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node.js einrichten
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+
+      # The package only needs the web app's files (copied by prepare-app), not the root dependencies.
+      - name: Abhängigkeiten der Desktop-App installieren
+        run: npm ci
+
+      # One .appx per processor: dist/PDF-Tool-Store-<version>-x64.appx and …-arm64.appx.
+      - name: Store-Pakete bauen
+        run: npm run dist:store
+
+      # Checks both packages without installing them (an .appx is a ZIP file) and lists them in the
+      # job summary. The manifests are kept for the following steps and the report artifact.
+      - name: Paketinhalt prüfen
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $work = New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP 'msstore')
+          $version = node -p "require('./package.json').version"
+          # Every tile image must come from build/appx – none of electron-builder's sample images.
+          $expectedAssets = (Get-ChildItem build/appx -File).Name | Sort-Object
+          $summary = @('| Paket | Größe | Identity Name | Publisher | Version |', '|---|---|---|---|---|')
+          # With all four repository variables set, the packages must carry exactly that identity.
+          $store = 'MSSTORE_IDENTITY_NAME', 'MSSTORE_PUBLISHER', 'MSSTORE_PUBLISHER_DISPLAY_NAME', 'MSSTORE_DISPLAY_NAME' |
+            ForEach-Object { "$([Environment]::GetEnvironmentVariable($_))".Trim() }
+          $expectStoreIdentity = $store -notcontains ''
+
+          foreach ($arch in 'x64', 'arm64') {
+            $file = "dist/PDF-Tool-Store-$version-$arch.appx"
+            if (-not (Test-Path $file)) { throw "$file wurde nicht gebaut" }
+            $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $file))
+            try {
+              $entries = $zip.Entries.FullName
+              $manifestFile = Join-Path $work "AppxManifest-$arch.xml"
+              [System.IO.Compression.ZipFileExtensions]::ExtractToFile($zip.GetEntry('AppxManifest.xml'), $manifestFile, $true)
+              [xml]$manifest = Get-Content -Raw -Encoding UTF8 $manifestFile
+              $identity = $manifest.Package.Identity
+              if ($identity.ProcessorArchitecture -ne $arch) { throw "$file ist für $($identity.ProcessorArchitecture) statt $arch gebaut" }
+              if ($identity.Version -ne "$version.0") { throw "$file hat die Version $($identity.Version) statt $version.0" }
+              $properties = $manifest.Package.Properties
+              if ($expectStoreIdentity -and ($identity.Name -ne $store[0] -or $identity.Publisher -ne $store[1] -or
+                  $properties.PublisherDisplayName -ne $store[2] -or $properties.DisplayName -ne $store[3])) {
+                throw "$file hat nicht die Store-Identität aus den Repository-Variablen"
+              }
+              $assets = $entries | Where-Object { $_ -like 'assets/*' } | ForEach-Object { $_.Substring(7) } | Sort-Object
+              if (Compare-Object $expectedAssets $assets) { throw "Die Bilder in $file entsprechen nicht desktop/build/appx" }
+              if ($entries -notcontains 'resources.pri') { throw "$file enthält keine resources.pri (Auswahl der Bildgrößen)" }
+
+              # Machine type in the PE header of PDF-Tool.exe: 8664 for x64, aa64 for ARM64.
+              $stream = $zip.GetEntry('app/PDF-Tool.exe').Open()
+              try {
+                $header = New-Object byte[] 4096
+                $read = 0
+                while ($read -lt $header.Length) {
+                  $count = $stream.Read($header, $read, $header.Length - $read)
+                  if ($count -le 0) { break }
+                  $read += $count
+                }
+              } finally { $stream.Dispose() }
+              $machine = '{0:x4}' -f [BitConverter]::ToUInt16($header, [BitConverter]::ToInt32($header, 0x3C) + 4)
+              $expectedMachine = @{ x64 = '8664'; arm64 = 'aa64' }[$arch]
+              if ($machine -ne $expectedMachine) { throw "app/PDF-Tool.exe in $file hat den Maschinentyp $machine statt $expectedMachine" }
+            } finally { $zip.Dispose() }
+
+            $size = '{0:N0} MB' -f ((Get-Item $file).Length / 1MB)
+            Write-Output "$file`: $($identity.Name), $($identity.Publisher), $($identity.Version), PDF-Tool.exe $machine"
+            $summary += "| ``$(Split-Path $file -Leaf)`` | $size | ``$($identity.Name)`` | ``$($identity.Publisher)`` | $($identity.Version) |"
+          }
+          $summary = @('### Microsoft-Store-Pakete', '') + $summary
+          $summary | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+
+      # Only the unsigned packages built by electron-builder – they are what Partner Center expects.
+      # Uploaded right after the content check, which is the gate for what goes to Partner Center: a
+      # failure of the install/launch test or the certification kit on the runner below still marks the
+      # job as failed, but no longer withholds packages that were built and checked correctly.
+      - name: Artefakt hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event_name == 'pull_request' && format('PDF-Tool-Microsoft-Store-PR-{0}', github.event.number) || 'PDF-Tool-Microsoft-Store' }}
+          path: |
+            desktop/dist/PDF-Tool-Store-*-x64.appx
+            desktop/dist/PDF-Tool-Store-*-arm64.appx
+          if-no-files-found: error
+          retention-days: 30
+
+      # Information only: which image variants Windows can pick from. electron-builder runs makepri
+      # with a configuration (autoResourcePackage "Scale") that moves the non-default scale variants
+      # into extra resources.scale-*.pri files, which Windows only reads for resource packages of a
+      # bundle. The dump of the main resources.pri shows what a single package really offers.
+      - name: Bildvarianten im Ressourcenindex anzeigen
+        continue-on-error: true
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $work = Join-Path $env:RUNNER_TEMP 'msstore'
+          $version = node -p "require('./package.json').version"
+          $makepri = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\makepri.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Directory.Parent.Name -match '^\d+(\.\d+){3}$' } |
+            Sort-Object { [version]$_.Directory.Parent.Name } -Descending | Select-Object -First 1
+          if (-not $makepri) {
+            Write-Output '::notice::makepri.exe (Windows SDK) ist auf dem Runner nicht vorhanden – Ressourcenindex nicht angezeigt.'
+            exit 0
+          }
+          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path "dist/PDF-Tool-Store-$version-x64.appx"))
+          try {
+            $priFiles = $zip.Entries | Where-Object { $_.FullName -like 'resources*.pri' }
+            Write-Output "PRI-Dateien im Paket: $($priFiles.FullName -join ', ')"
+            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($zip.GetEntry('resources.pri'), (Join-Path $work 'resources.pri'), $true)
+          } finally { $zip.Dispose() }
+          $dumpFile = Join-Path $work 'resources-x64.pri.xml'
+          & $makepri.FullName dump /if (Join-Path $work 'resources.pri') /of $dumpFile /dt Detailed /o | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "makepri dump ist mit $LASTEXITCODE fehlgeschlagen" }
+          [xml]$dump = Get-Content -Raw $dumpFile
+          foreach ($resource in $dump.SelectNodes('//NamedResource')) {
+            $qualifiers = $resource.SelectNodes('Candidate') | ForEach-Object { $_.GetAttribute('qualifiers') }
+            Write-Output ('{0}: {1}' -f $resource.GetAttribute('name'), ($qualifiers -join ' | '))
+          }
+
+      # Smoke test of the x64 package as Windows installs it from the Store: sign a copy with a
+      # self-signed certificate whose subject equals the manifest's Publisher, trust it, install it,
+      # start it through its AppUserModelID like the Start menu does, check that the main window
+      # appears and the app keeps running, then close and uninstall it. The runner is discarded
+      # afterwards, so the certificate is not removed again.
+      - name: Paket installieren und starten (x64)
+        run: |
+          # The Appx cmdlets only work reliably in Windows PowerShell.
+          Import-Module Appx -UseWindowsPowerShell -WarningAction SilentlyContinue
+          $work = Join-Path $env:RUNNER_TEMP 'msstore'
+          $version = node -p "require('./package.json').version"
+          [xml]$manifest = Get-Content -Raw -Encoding UTF8 (Join-Path $work 'AppxManifest-x64.xml')
+          $identityName = $manifest.Package.Identity.Name
+          $publisher = $manifest.Package.Identity.Publisher
+          $appId = $manifest.Package.Applications.Application.Id
+
+          $signed = Join-Path $work "PDF-Tool-Store-$version-x64-testsigniert.appx"
+          Copy-Item "dist/PDF-Tool-Store-$version-x64.appx" $signed -Force
+          # Certificate as in Microsoft's "Create a certificate for package signing": code signing (EKU
+          # 1.3.6.1.5.5.7.3.3), no CA (basic constraints).
+          $cert = New-SelfSignedCertificate -Type Custom -Subject $publisher -KeyUsage DigitalSignature `
+            -FriendlyName 'PDF-Tool MSIX-Test' -CertStoreLocation Cert:\CurrentUser\My `
+            -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3', '2.5.29.19={text}')
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Where-Object { $_.Directory.Parent.Name -match '^\d+(\.\d+){3}$' } |
+            Sort-Object { [version]$_.Directory.Parent.Name } -Descending | Select-Object -First 1
+          if (-not $signtool) { throw 'signtool.exe (Windows SDK) wurde auf dem Runner nicht gefunden' }
+          & $signtool.FullName sign /fd SHA256 /sha1 $cert.Thumbprint /s My $signed
+          if ($LASTEXITCODE -ne 0) { throw "signtool ist mit $LASTEXITCODE fehlgeschlagen" }
+          # Trust the certificate machine-wide for app packages (TrustedPeople). Through .NET, because
+          # PowerShell 7 may hand the PKI cmdlets' certificates over from Windows PowerShell as copies.
+          $trusted = New-Object System.Security.Cryptography.X509Certificates.X509Store 'TrustedPeople', 'LocalMachine'
+          $trusted.Open('ReadWrite')
+          $trusted.Add((Get-Item "Cert:\CurrentUser\My\$($cert.Thumbprint)"))
+          $trusted.Close()
+          # Installing signed packages outside the Store ("sideloading") is allowed by default since
+          # Windows 10 2004 / Server 2022 – make sure of it on the runner.
+          $unlockKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock'
+          if (-not (Test-Path $unlockKey)) { New-Item -Path $unlockKey | Out-Null }
+          New-ItemProperty -Path $unlockKey -Name AllowAllTrustedApps -Value 1 -PropertyType DWord -Force | Out-Null
+
+          function Save-Screenshot($path) {
+            try {
+              Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+              $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+              $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+              $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+              $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+              $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+              $graphics.Dispose(); $bitmap.Dispose()
+            } catch { Write-Output "::warning::Bildschirmfoto nicht möglich: $_" }
+          }
+
+          $installed = $null
+          try {
+            Add-AppxPackage -Path $signed
+            $installed = Get-AppxPackage -Name $identityName
+            if (-not $installed) { throw "Paket $identityName ist nach der Installation nicht registriert" }
+            $aumid = "$($installed.PackageFamilyName)!$appId"
+            Write-Output "Installiert: $($installed.PackageFullName) in $($installed.InstallLocation)"
+            Write-Output "Starte shell:AppsFolder\$aumid"
+            Start-Process -FilePath explorer.exe -ArgumentList "shell:AppsFolder\$aumid"
+
+            # The main window is titled "PDF-Tool" (main.js); Electron's other processes have no window.
+            $deadline = (Get-Date).AddSeconds(90)
+            $app = $null
+            while (-not $app -and (Get-Date) -lt $deadline) {
+              Start-Sleep -Seconds 1
+              $app = Get-Process -Name 'PDF-Tool' -ErrorAction SilentlyContinue |
+                Where-Object { $_.MainWindowTitle -eq 'PDF-Tool' } | Select-Object -First 1
+            }
+            if (-not $app) { throw 'Das Hauptfenster „PDF-Tool“ ist nicht innerhalb von 90 Sekunden erschienen' }
+            if ($app.Path -and -not $app.Path.StartsWith($installed.InstallLocation, [StringComparison]::OrdinalIgnoreCase)) {
+              throw "PDF-Tool läuft nicht aus dem installierten Paket, sondern aus $($app.Path)"
+            }
+            Write-Output "Hauptfenster erschienen (Prozess $($app.Id), $($app.Path))"
+
+            Start-Sleep -Seconds 15
+            $app.Refresh()
+            if ($app.HasExited) { throw 'PDF-Tool hat sich kurz nach dem Start wieder beendet' }
+            # (PowerShell treats „ and “ as double quotes, hence single quotes and -f for German quotes.)
+            if ($app.MainWindowTitle -ne 'PDF-Tool') { throw ('Das Hauptfenster ist verschwunden (Titel jetzt: „{0}“)' -f $app.MainWindowTitle) }
+            # The page runs in a renderer process; if it had crashed, the window would stay empty.
+            $renderers = Get-CimInstance Win32_Process -Filter "Name = 'PDF-Tool.exe'" |
+              Where-Object { $_.CommandLine -match '--type=renderer' }
+            if (-not $renderers) { throw 'Kein Renderer-Prozess mehr – die Oberfläche ist abgestürzt' }
+            Write-Output "PDF-Tool läuft nach 15 Sekunden noch, $(@($renderers).Count) Renderer-Prozess(e)."
+            Save-Screenshot (Join-Path $work 'screenshot-x64.png')
+
+            # Close like a user would; window-all-closed quits the app.
+            [void]$app.CloseMainWindow()
+            if (-not $app.WaitForExit(15000)) { throw 'PDF-Tool hat sich nach dem Schließen des Fensters nicht beendet' }
+          } catch {
+            Save-Screenshot (Join-Path $work 'screenshot-x64-fehler.png')
+            Get-Process -Name 'PDF-Tool' -ErrorAction SilentlyContinue | Format-Table Id, MainWindowTitle, Path -AutoSize | Out-String | Write-Output
+            foreach ($log in 'Microsoft-Windows-AppModel-Runtime/Admin', 'Microsoft-Windows-TWinUI/Operational', 'Microsoft-Windows-AppXDeploymentServer/Operational') {
+              Write-Output "--- $log"
+              Get-WinEvent -LogName $log -MaxEvents 10 -ErrorAction SilentlyContinue |
+                Where-Object { $_.Level -le 3 } | Format-List TimeCreated, Id, Message | Out-String | Write-Output
+            }
+            throw
+          } finally {
+            Get-Process -Name 'PDF-Tool' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            if ($installed) {
+              Start-Sleep -Seconds 2
+              Remove-AppxPackage -Package $installed.PackageFullName
+              if (Get-AppxPackage -Name $identityName) { throw "Paket $identityName ließ sich nicht deinstallieren" }
+              Write-Output 'Paket wieder deinstalliert.'
+            }
+          }
+
+      # Windows App Certification Kit, the checks Partner Center also runs on upload – if the runner's
+      # Windows SDK includes it. appcert.exe runs without user interaction; it installs the signed test
+      # copy itself (its certificate is trusted from the previous step) and removes it again. The result
+      # is information only: the report is in the artifact "msstore-reports".
+      - name: Windows App Certification Kit (falls vorhanden)
+        continue-on-error: true
+        timeout-minutes: 30
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP 'msstore'
+          $version = node -p "require('./package.json').version"
+          $appcert = "${env:ProgramFiles(x86)}\Windows Kits\10\App Certification Kit\appcert.exe"
+          if (-not (Test-Path $appcert)) {
+            Write-Output '::notice::Das Windows App Certification Kit ist auf dem Runner nicht installiert – Prüfung übersprungen.'
+            exit 0
+          }
+          $signed = Join-Path $work "PDF-Tool-Store-$version-x64-testsigniert.appx"
+          $report = Join-Path $work 'wack-report-x64.xml'
+          & $appcert reset
+          & $appcert test -appxpackagepath $signed -reportoutputpath $report
+          Write-Output "appcert.exe beendet mit $LASTEXITCODE"
+          if (-not (Test-Path $report)) { throw 'appcert.exe hat keinen Bericht geschrieben' }
+          [xml]$xml = Get-Content -Raw $report
+          $overall = $xml.DocumentElement.GetAttribute('OVERALL_RESULT')
+          foreach ($test in $xml.SelectNodes('//TEST')) {
+            $resultNode = $test.SelectSingleNode('RESULT')
+            $result = if ($resultNode) { $resultNode.InnerText.Trim() } else { $test.GetAttribute('RESULT') }
+            Write-Output ('{0,-12} {1}' -f $result, $test.GetAttribute('NAME'))
+            if ($result -match 'FAIL|WARN') { Write-Output "::warning::WACK: $($test.GetAttribute('NAME')): $result" }
+          }
+          Write-Output "Gesamtergebnis: $overall"
+          if ($overall -ne 'PASS') { Write-Output "::warning::Windows App Certification Kit: $overall – Details im Artefakt msstore-reports" }
+          exit 0 # appcert's own exit code is not the test result
+
+      - name: Prüfberichte hochladen
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msstore-reports
+          path: |
+            ${{ runner.temp }}/msstore/*.xml
+            ${{ runner.temp }}/msstore/*.png
+          retention-days: 14
+          if-no-files-found: ignore

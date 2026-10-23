@@ -99,6 +99,14 @@ function secureWebPreferences() {
   };
 }
 
+/**
+ * True when running from the Microsoft Store package (MSIX/AppX). Windows installs packages below a
+ * "WindowsApps" folder; Electron's own process.windowsStore makes the same check.
+ */
+function isWindowsStorePackage() {
+  return Boolean(process.windowsStore) || /\\WindowsApps\\/i.test(process.execPath);
+}
+
 function parseUrl(url) {
   try {
     return new URL(url);
@@ -496,7 +504,10 @@ if (!app.requestSingleInstanceLock()) {
   app.on('window-all-closed', () => app.quit());
 
   app.whenReady().then(async () => {
-    if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
+    // The Microsoft Store package (MSIX/AppX) already has an AppUserModelID from its identity
+    // (<PackageFamilyName>!PDFTool); a different one would detach the window's taskbar button from
+    // the app's Start menu entry and pinned icon.
+    if (process.platform === 'win32' && !isWindowsStorePackage()) app.setAppUserModelId(APP_ID);
     await configureSession(session.defaultSession);
     protocol.handle(SCHEME, handleAppRequest);
     Menu.setApplicationMenu(buildMenu());

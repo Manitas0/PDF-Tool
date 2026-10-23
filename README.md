@@ -12,6 +12,7 @@ Es gibt keinen Server, keinen Upload und keinen Build-Schritt: Die Seite funktio
 - [Datenschutz](#datenschutz)
 - [Benutzung](#benutzung)
 - [Windows-Desktop-App](#windows-desktop-app)
+- [Microsoft Store](#microsoft-store)
 - [Seitenangaben – Syntax](#seitenangaben--syntax)
 - [Einschränkungen](#einschränkungen)
 - [Entwicklung](#entwicklung)
@@ -60,6 +61,8 @@ Alles bleibt lokal:
   bleiben ausgeblendet.
 - Eine Content-Security-Policy unterbindet zusätzlich Netzwerkverbindungen aus der Seite heraus.
 - pdf.js läuft mit `isEvalSupported: false` (Schutz vor CVE-2024-4367).
+- Die vollständige Datenschutzerklärung – auch für die Desktop-App und den Microsoft Store – steht in
+  [`PRIVACY.md`](PRIVACY.md).
 
 ## Benutzung
 
@@ -216,6 +219,25 @@ die App bei jeder Änderung an `desktop/`, an der Web-App, an den gemeinsam genu
 `.exe`-Dateien. Die arm64-Variante kann dort nicht gestartet werden; der Workflow prüft nur, dass alle vier Dateien
 entstanden sind und `PDF-Tool.exe` im arm64-Build ein ARM64-Programm ist.
 
+## Microsoft Store
+
+Die Windows-Desktop-App ist für die Veröffentlichung im Microsoft Store vorbereitet (noch nicht veröffentlicht).
+Dort gibt es sie als MSIX-Paket, das Microsoft beim Veröffentlichen selbst signiert: ohne SmartScreen-Warnung,
+mit Installation per Klick und automatischen Updates über den Store.
+
+- **Schritt-für-Schritt-Anleitung** vom Partner-Center-Konto bis zur Einreichung: [`store/ANLEITUNG.md`](store/ANLEITUNG.md)
+- **Texte für den Store-Eintrag:** [`store/listing-de.md`](store/listing-de.md) und [`store/listing-en.md`](store/listing-en.md)
+- **Screenshots** (1920 × 1080): [`store/screenshots/`](store/screenshots/), erzeugt aus der echten App mit
+  [`store/make-screenshots.mjs`](store/make-screenshots.mjs)
+- **Datenschutzerklärung:** [`PRIVACY.md`](PRIVACY.md)
+
+Die Pakete (je eine `.appx`-Datei für x64 und arm64) baut der Workflow „Desktop“ als Artefakt
+„PDF-Tool-Microsoft-Store“. Die Identität der App im Store kommt aus den Repository-Variablen
+`MSSTORE_IDENTITY_NAME`, `MSSTORE_PUBLISHER`, `MSSTORE_PUBLISHER_DISPLAY_NAME` und `MSSTORE_DISPLAY_NAME`
+(*Settings → Secrets and variables → Actions → Variables*); fehlen sie, entsteht nur ein Testpaket, das der Store
+ablehnt. Unter Windows geht es auch lokal mit `npm run dist:store` im Ordner `desktop/` (Identität dann über
+gleichnamige Umgebungsvariablen).
+
 ## Seitenangaben – Syntax
 
 Seitenzahlen beginnen bei 1. Mehrere Angaben werden durch Komma oder Semikolon getrennt,
@@ -291,6 +313,8 @@ npm run serve                 # lokaler Server auf http://127.0.0.1:8080/
 | `tests/unit/` | Unit-Tests für `js/pdf-core.js` |
 | `tests/e2e/` | Playwright-Tests der kompletten Oberfläche und des Servers |
 | `desktop/` | Windows-Desktop-App (Electron): `main.js`, Build-Konfiguration in `package.json`, Tests in `desktop/tests/` – siehe [Windows-Desktop-App](#windows-desktop-app) |
+| `store/` | Microsoft Store: Anleitung, Texte für den Store-Eintrag, Screenshots und das Skript, das sie erzeugt – siehe [Microsoft Store](#microsoft-store) |
+| `PRIVACY.md` | Datenschutzerklärung (Deutsch und Englisch) |
 
 ### Hinweise
 
